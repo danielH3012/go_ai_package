@@ -1,4 +1,4 @@
-package main
+package goaipackage
 
 import (
 	"bytes"
@@ -31,8 +31,6 @@ const (
 )
 
 var GeneratorModel = GeneratorModel6
-
-
 
 type Message struct {
 	Role    string `json:"role"`

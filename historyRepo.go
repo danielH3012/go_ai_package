@@ -1,4 +1,4 @@
-package main // Gunakan nama package (bukan main) jika ingin dijadikan plugin/library
+package goaipackage // Gunakan nama package (bukan main) jika ingin dijadikan plugin/library
 
 import (
 	"database/sql"
