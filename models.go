@@ -562,14 +562,9 @@ IMPORTANT: Output ONLY the raw JSON object. Do not include markdown codeblocks o
 	return result
 }
 
-// SearchIntent exports searchIntent for external callers and tests.
-func SearchIntent(ctx context.Context, query string, userContext map[string]any, model string, intentOpts ...RequestIntentOption) *IntentResult {
-	return searchIntent(ctx, query, userContext, model, intentOpts...)
-}
-
-// SearchIntentJSON executes search intent and returns the JSON string representation.
-func SearchIntentJSON(ctx context.Context, query string, userContext map[string]any, model string, intentOpts ...RequestIntentOption) (string, error) {
-	res := SearchIntent(ctx, query, userContext, model, intentOpts...)
+// SearchIntent classifies user intent and returns the result directly as a JSON string.
+func SearchIntent(ctx context.Context, query string, userContext map[string]any, model string, intentOpts ...RequestIntentOption) (string, error) {
+	res := searchIntent(ctx, query, userContext, model, intentOpts...)
 	return res.ToJSON()
 }
 
@@ -583,8 +578,17 @@ func hasTool(tools []mcp.Tool, name string) bool {
 	return false
 }
 
-// CallTools orchestrates multi-turn tool calling, reasoning loops, and response generation.
-func CallTools(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, query string, role string, userContext map[string]any, maxIterations int, model string, toolsOpts ...RequestToolsOption) (*AgentResult, error) {
+// CallTools orchestrates multi-turn tool calling, reasoning loops, and returns the result directly as a JSON string.
+func CallTools(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, query string, role string, userContext map[string]any, maxIterations int, model string, toolsOpts ...RequestToolsOption) (string, error) {
+	res, err := executeCallTools(ctx, client, mcpTools, query, role, userContext, maxIterations, model, toolsOpts...)
+	if err != nil {
+		return "", err
+	}
+	return res.ToJSON()
+}
+
+// executeCallTools handles internal tool execution logic
+func executeCallTools(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, query string, role string, userContext map[string]any, maxIterations int, model string, toolsOpts ...RequestToolsOption) (*AgentResult, error) {
 	// 1. RBAC at the top: immediately enforce role permissions and filter tools
 	role = strings.ToLower(strings.TrimSpace(role))
 	availableTools := filterRoles(mcpTools, role)
@@ -836,15 +840,6 @@ If NO tools are needed:
 	}, nil
 }
 
-// CallToolsJSON executes CallTools and returns the AgentResult as a JSON string.
-func CallToolsJSON(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, query string, role string, userContext map[string]any, maxIterations int, model string, toolsOpts ...RequestToolsOption) (string, error) {
-	res, err := CallTools(ctx, client, mcpTools, query, role, userContext, maxIterations, model, toolsOpts...)
-	if err != nil {
-		return "", err
-	}
-	return res.ToJSON()
-}
-
 func extractGeneratedAttachment(accumulated []ToolExecutionResult) *AttachmentInfo {
 	for i := len(accumulated) - 1; i >= 0; i-- {
 		res := accumulated[i]
@@ -897,12 +892,27 @@ func cleanContextPayload(contextStr string) string {
 	if trimmed == "" {
 		return "No records found."
 	}
+	// If contextStr is a JSON payload with "context" field, extract it directly
+	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &m); err == nil {
+			if ctxVal, ok := m["context"].(string); ok && ctxVal != "" {
+				trimmed = strings.TrimSpace(ctxVal)
+			}
+		}
+	}
 	reConsecutiveNewlines := regexp.MustCompile(`\n{3,}`)
 	return reConsecutiveNewlines.ReplaceAllString(trimmed, "\n\n")
 }
 
-// GenerateResponse generates the final response
-func GenerateResponse(ctx context.Context, query string, contextStr string, userContext map[string]any, model string, respOpts ...RequestResponseOption) *ResponseResult {
+// GenerateResponse generates the final response and returns the result directly as a JSON string.
+func GenerateResponse(ctx context.Context, query string, contextStr string, userContext map[string]any, model string, respOpts ...RequestResponseOption) (string, error) {
+	res := generateResponse(ctx, query, contextStr, userContext, model, respOpts...)
+	return res.ToJSON()
+}
+
+// generateResponse handles internal response generation logic
+func generateResponse(ctx context.Context, query string, contextStr string, userContext map[string]any, model string, respOpts ...RequestResponseOption) *ResponseResult {
 	if model == "" {
 		model = GeneratorModel
 	}
@@ -967,10 +977,4 @@ Guidelines:
 		return &ResponseResult{Answer: "I do not have information or unable to do that."}
 	}
 	return &ResponseResult{Answer: finalAns}
-}
-
-// GenerateResponseJSON executes GenerateResponse and returns the ResponseResult as a JSON string.
-func GenerateResponseJSON(ctx context.Context, query string, contextStr string, userContext map[string]any, model string, respOpts ...RequestResponseOption) (string, error) {
-	res := GenerateResponse(ctx, query, contextStr, userContext, model, respOpts...)
-	return res.ToJSON()
 }

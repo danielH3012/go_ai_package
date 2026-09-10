@@ -40,29 +40,32 @@ Membersihkan teks mentah LLM dari tag `<thought>`, `<think>`, token DSML, atau s
 
 ## 2. Tiga Agen Utama AI (`models.go`)
 
-### Agen 1: `SearchIntent` & `SearchIntentJSON`
+Semua agen utama menghasilkan **output JSON string** (`(string, error)`) secara langsung agar mudah di-parse atau diteruskan ke sistem/frontend lain tanpa ketergantungan struct Go.
+
+### Agen 1: `SearchIntent`
 Menganalisis kebutuhan tool dan alasan berdasarkan prompt user.
 - **Fungsi**:
-  - `SearchIntent(ctx, query, userContext, model, intentOpts...) *IntentResult`
-  - `SearchIntentJSON(ctx, query, userContext, model, intentOpts...) (string, error)`
+  - `SearchIntent(ctx, query, userContext, model, intentOpts...) (string, error)`
 - **Parameter**:
   - `ctx`: `context.Context`.
   - `query`: Pertanyaan/instruksi user.
   - `userContext`: Map konteks tambahan (`map[string]any`).
   - `model`: Model LLM (kosongkan `""` untuk default).
   - `intentOpts`: Opsi kustom prompt (misal: `WithIntentPrompt("...")`).
-- **Return**: `*IntentResult` atau JSON `string` format `{"tools": [...], "reason": "..."}`.
+- **Return**: `(string, error)` — JSON string format `{"tools": [...], "reason": "...", "target_tool": "...", "category": "...", "is_off_topic": false}`.
 - **Contoh**:
   ```go
-  intent := SearchIntent(ctx, "Tampilkan daftar user aktif", nil, "")
-  fmt.Println(intent.Tools, intent.Reason)
+  intentJSON, err := SearchIntent(ctx, "Tampilkan daftar user aktif", nil, "")
+  if err != nil {
+      log.Fatal(err)
+  }
+  fmt.Println(intentJSON)
   ```
 
-### Agen 2: `CallTools` & `CallToolsJSON`
+### Agen 2: `CallTools`
 Menjalankan reasoning loop multi-turn, pemanggilan tool MCP paralel, dan ekstraksi konteks data.
 - **Fungsi**:
-  - `CallTools(ctx, client, mcpTools, query, role, userContext, maxIterations, model, toolsOpts...) (*AgentResult, error)`
-  - `CallToolsJSON(ctx, client, mcpTools, query, role, userContext, maxIterations, model, toolsOpts...) (string, error)`
+  - `CallTools(ctx, client, mcpTools, query, role, userContext, maxIterations, model, toolsOpts...) (string, error)`
 - **Parameter**:
   - `ctx`: `context.Context`.
   - `client`: `*client.Client` koneksi MCP server.
@@ -73,33 +76,39 @@ Menjalankan reasoning loop multi-turn, pemanggilan tool MCP paralel, dan ekstrak
   - `maxIterations`: Batas loop perbaikan (minimal: 3).
   - `model`: Model LLM.
   - `toolsOpts`: Opsi guardrails kustom (misal: `WithToolsPrompt("...")`).
-- **Return**: `*AgentResult` atau JSON `string` format `{"context": "...", "attachment": {...}, "tool_results": [...]}`.
+- **Return**: `(string, error)` — JSON string format `{"context": "...", "attachment": {...}, "tool_results": [...]}`.
 - **Contoh**:
   ```go
-  toolRes, err := CallTools(ctx, mcpClient, mcpTools, "Ambil data user", "admin", nil, 3, "",
+  toolJSON, err := CallTools(ctx, mcpClient, mcpTools, "Ambil data user", "admin", nil, 3, "",
       WithToolsPrompt("Jangan izinkan update tanpa ID."),
   )
+  if err != nil {
+      log.Fatal(err)
+  }
+  fmt.Println(toolJSON)
   ```
 
-### Agen 3: `GenerateResponse` & `GenerateResponseJSON`
+### Agen 3: `GenerateResponse`
 Menyusun jawaban akhir manusiawi berdasarkan hasil konteks yang diekstrak.
 - **Fungsi**:
-  - `GenerateResponse(ctx, query, contextStr, userContext, model, respOpts...) *ResponseResult`
-  - `GenerateResponseJSON(ctx, query, contextStr, userContext, model, respOpts...) (string, error)`
+  - `GenerateResponse(ctx, query, contextStr, userContext, model, respOpts...) (string, error)`
 - **Parameter**:
   - `ctx`: `context.Context`.
   - `query`: Pertanyaan user.
-  - `contextStr`: Data konteks hasil dari `CallTools` (`toolRes.Context`).
+  - `contextStr`: Data konteks hasil `CallTools` (dapat langsung memasukkan raw string `toolJSON` dari `CallTools` atau teks konteks biasa).
   - `userContext`: Map konteks tambahan.
   - `model`: Model LLM.
   - `respOpts`: Opsi kustom sistem respon (misal: `WithResponsePrompt("...")`).
-- **Return**: `*ResponseResult` atau JSON `string` format `{"answer": "..."}`.
+- **Return**: `(string, error)` — JSON string format `{"answer": "..."}`.
 - **Contoh**:
   ```go
-  finalResp := GenerateResponse(ctx, query, toolRes.Context, nil, "",
+  respJSON, err := GenerateResponse(ctx, query, toolJSON, nil, "",
       WithResponsePrompt("Jawab secara ringkas dalam bahasa Indonesia."),
   )
-  fmt.Println(finalResp.Answer)
+  if err != nil {
+      log.Fatal(err)
+  }
+  fmt.Println(respJSON)
   ```
 
 ---
@@ -245,20 +254,27 @@ func main() {
 	query := "Tampilkan data terbaru"
 	role := "admin"
 
-	// 3. Agen 1: Identifikasi Intent
-	intent := SearchIntent(ctx, query, nil, "")
-	fmt.Printf("[Intent] Tools: %v, Reason: %s\n", intent.Tools, intent.Reason)
+	// 3. Agen 1: Identifikasi Intent (Output JSON String)
+	intentJSON, err := SearchIntent(ctx, query, nil, "")
+	if err != nil {
+		log.Fatalf("Gagal SearchIntent: %v", err)
+	}
+	fmt.Printf("[Intent JSON]:\n%s\n", intentJSON)
 
-	// 4. Agen 2: Jalankan Tool Calling & Ekstraksi Data
-	agentRes, err := CallTools(ctx, client, tools, query, role, nil, 3, "")
+	// 4. Agen 2: Jalankan Tool Calling & Ekstraksi Data (Output JSON String)
+	toolJSON, err := CallTools(ctx, client, tools, query, role, nil, 3, "")
 	if err != nil {
 		log.Fatalf("Gagal CallTools: %v", err)
 	}
+	fmt.Printf("[Tool JSON]:\n%s\n", toolJSON)
 
-	// 5. Agen 3: Susun Jawaban Akhir
-	response := GenerateResponse(ctx, query, agentRes.Context, nil, "",
+	// 5. Agen 3: Susun Jawaban Akhir (Menerima toolJSON langsung, Output JSON String)
+	respJSON, err := GenerateResponse(ctx, query, toolJSON, nil, "",
 		WithResponsePrompt("Jawab secara ringkas dan profesional."),
 	)
-	fmt.Printf("[Jawaban Akhir]:\n%s\n", response.Answer)
+	if err != nil {
+		log.Fatalf("Gagal GenerateResponse: %v", err)
+	}
+	fmt.Printf("[Jawaban Akhir JSON]:\n%s\n", respJSON)
 }
 ```
