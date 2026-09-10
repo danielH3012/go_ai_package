@@ -116,10 +116,12 @@ func (repo *HistoryRepository) LoadContext(req *RequestChat) (map[string]any, er
 
 	// 1. Ambil Riwayat Chat (History) 10 pesan terakhir
 	historyQuery := `
-		SELECT role, message 
-		FROM chat_history 
-		WHERE cache_id = ? 
-		ORDER BY id ASC LIMIT 10`
+		SELECT role, message FROM (
+			SELECT id, role, message 
+			FROM chat_history 
+			WHERE cache_id = ? 
+			ORDER BY id DESC LIMIT 10
+		) ORDER BY id ASC`
 
 	rows, err := repo.db.Query(historyQuery, req.CacheID)
 	if err == nil {

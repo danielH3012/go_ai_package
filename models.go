@@ -514,6 +514,9 @@ IMPORTANT: Output ONLY the raw JSON object. Do not include markdown codeblocks o
 
 	var userPrompt strings.Builder
 	if userContext != nil {
+		if hist, ok := userContext["history"].([]ChatMessage); ok && len(hist) > 0 {
+			userPrompt.WriteString(fmt.Sprintf("=== PREVIOUS CONVERSATION HISTORY ===\n%s\n\n", FormatChatHistoryForLlm(hist)))
+		}
 		hasUploaded, _ := userContext["has_user_uploaded_file"].(bool)
 		if attachText, ok := userContext["attachment_text"].(string); ok && attachText != "" {
 			attachName := "Attached Document"
@@ -949,6 +952,9 @@ Guidelines:
 
 	var userPromptBuilder strings.Builder
 	if userContext != nil {
+		if hist, ok := userContext["history"].([]ChatMessage); ok && len(hist) > 0 {
+			userPromptBuilder.WriteString(fmt.Sprintf("=== PREVIOUS CONVERSATION HISTORY ===\n%s\n\n", FormatChatHistoryForLlm(hist)))
+		}
 		if attachText, ok := userContext["attachment_text"].(string); ok && attachText != "" {
 			attachName := "Attached Document"
 			if name, ok := userContext["attachment_name"].(string); ok && name != "" {
