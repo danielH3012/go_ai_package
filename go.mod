@@ -1,4 +1,4 @@
-module go_ai_package
+module github.com/danielH3012/go_ai_package
 
 go 1.26.2
 
