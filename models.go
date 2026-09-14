@@ -19,18 +19,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-const (
-	GeneratorModel1 = "ox-alpha-free"
-	GeneratorModel2 = "glm-5.3-flash"
-	GeneratorModel3 = "mimo-v2.5"
-	GeneratorModel4 = "gpt-5.6-luna"
-	GeneratorModel5 = "qwen3.8-flash"
-	GeneratorModel6 = "deepseek-v4-flash"
-	GeneratorModel7 = "liquid/lfm-2.5-2.6b:free"
-	GeneratorModel8 = "z-ai/glm-5.2:free"
-)
+const DefaultModel = "liquid/lfm-2.5-2.6b:free"
 
-var GeneratorModel = GeneratorModel6
+var GeneratorModel = DefaultModel
 
 type Message struct {
 	Role    string `json:"role"`
@@ -94,11 +85,6 @@ func ChatGenerate(ctx context.Context, messages []Message, tools any, maxNewToke
 	}
 	if apiKey == "" {
 		apiKey = os.Getenv("OPENAI_API_KEY")
-	}
-
-	if strings.Contains(baseURL, "openrouter.ai") && !strings.Contains(model, "/") {
-		log.Printf("[chat_generate] Model '%s' lacks vendor prefix for OpenRouter, defaulting to '%s'", model, GeneratorModel7)
-		model = GeneratorModel7
 	}
 	endpoint := strings.TrimRight(baseURL, "/") + "/chat/completions"
 
@@ -453,7 +439,8 @@ func parseIntentJSON(raw string) (*IntentResult, error) {
 		result.Category = result.TargetTool
 		result.IsMutation = !isReadOnlyTool(result.TargetTool)
 		result.IsDelete = strings.Contains(toolLower, "delete") || strings.Contains(toolLower, "remove")
-		result.IsPDFReport = strings.Contains(toolLower, "pdf") || strings.Contains(toolLower, "csv") || strings.Contains(toolLower, "excel")
+		result.IsUpdate = strings.Contains(toolLower, "update") || strings.Contains(toolLower, "edit") || strings.Contains(toolLower, "patch")
+		result.IsReport = strings.Contains(toolLower, "pdf") || strings.Contains(toolLower, "csv") || strings.Contains(toolLower, "excel") || strings.Contains(toolLower, "report")
 	}
 
 	return result, nil
@@ -557,8 +544,9 @@ IMPORTANT: Output ONLY the raw JSON object. Do not include markdown codeblocks o
 		}
 	}
 
-	log.Printf("[searchIntent] Query: %q -> Category: %q, TargetTool: %q, IsMutation: %t, IsDelete: %t, IsPDFReport: %t, IsOffTopic: %t",
-		query, result.Category, result.TargetTool, result.IsMutation, result.IsDelete, result.IsPDFReport, result.IsOffTopic)
+	log.Printf("[searchIntent] Query: %q -> Category: %q, TargetTool: %q, IsMutation: %t, IsDelete: %t, IsUpdate: %t, IsReport: %t, IsOffTopic: %t",
+		query, result.Category, result.TargetTool, result.IsMutation, result.IsDelete, result.IsUpdate, result.IsReport, result.IsOffTopic)
+
 
 	return result
 }

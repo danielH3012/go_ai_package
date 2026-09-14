@@ -122,14 +122,15 @@ type AttachmentInfo struct {
 
 // IntentResult represents the output of SearchIntent.
 type IntentResult struct {
-	Tools       []string `json:"tools"`
-	Reason      string   `json:"reason"`
-	TargetTool  string   `json:"target_tool,omitempty"`
-	Category    string   `json:"category,omitempty"`
-	IsMutation  bool     `json:"is_mutation,omitempty"`
-	IsDelete    bool     `json:"is_delete,omitempty"`
-	IsPDFReport bool     `json:"is_pdf_report,omitempty"`
-	IsOffTopic  bool     `json:"is_off_topic,omitempty"`
+	Tools      []string `json:"tools"`
+	Reason     string   `json:"reason"`
+	TargetTool string   `json:"target_tool,omitempty"`
+	Category   string   `json:"category,omitempty"`
+	IsMutation bool     `json:"is_mutation,omitempty"`
+	IsDelete   bool     `json:"is_delete,omitempty"`
+	IsUpdate   bool     `json:"is_update,omitempty"`
+	IsReport   bool     `json:"is_report,omitempty"`
+	IsOffTopic bool     `json:"is_off_topic,omitempty"`
 }
 
 func (r *IntentResult) ToJSON() (string, error) {

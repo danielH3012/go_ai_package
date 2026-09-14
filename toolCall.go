@@ -468,13 +468,6 @@ func (p *pyParser) skipWhitespace() {
 	}
 }
 
-func (p *pyParser) peek() rune {
-	p.skipWhitespace()
-	if p.pos >= p.n {
-		return 0
-	}
-	return p.runes[p.pos]
-}
 
 func (p *pyParser) parseValue() any {
 	p.skipWhitespace()
