@@ -50,16 +50,6 @@ func SetAIConfig(apiKey, baseURL string) {
 	}
 }
 
-// SetAPIKey sets the global AI API key programmatically.
-func SetAPIKey(apiKey string) {
-	GlobalAIKey = apiKey
-}
-
-// SetBaseURL sets the global AI base URL programmatically.
-func SetBaseURL(baseURL string) {
-	GlobalBaseURL = baseURL
-}
-
 // ChatGenerate calls the OpenRouter/OpenAI chat completion API with retry & backoff.
 func ChatGenerate(ctx context.Context, messages []Message, tools any, maxNewTokens int, model string, retries int) (*ChatResult, error) {
 	_ = godotenv.Load(".env")
@@ -584,7 +574,7 @@ func executeCallTools(ctx context.Context, client *client.Client, mcpTools []mcp
 	if len(availableTools) == 0 {
 		return &AgentResult{Context: "I do not have permissions or tools to access that information."}, nil
 	}
-	UpdateKnownTools(availableTools)
+	updateKnownTools(availableTools)
 
 	if model == "" {
 		model = GeneratorModel
@@ -611,7 +601,7 @@ func executeCallTools(ctx context.Context, client *client.Client, mcpTools []mcp
 	}
 
 	// Apply Caveman tool catalog compression skill
-	availableTools = ShrinkToolCatalog(availableTools)
+	availableTools = shrinkToolCatalog(availableTools)
 
 	resolverMap := inferResolverMap(availableTools)
 	companyName := ""

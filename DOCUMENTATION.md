@@ -37,21 +37,14 @@ goaipackage.SetAIConfig("sk-xxx", "https://api.openai.com/v1")
 
 // DeepSeek langsung
 goaipackage.SetAIConfig("sk-xxx", "https://api.deepseek.com")
+
+// Hanya mengatur salah satu (kirim string kosong "" untuk nilai yang tidak ingin diubah)
+goaipackage.SetAIConfig("sk-xxx", "")
+goaipackage.SetAIConfig("", "https://openrouter.ai/api/v1")
 ```
 
 > [!TIP]
 > Jika tidak memanggil `SetAIConfig`, library akan membaca dari environment variable `AI_KEY` / `OPENAI_API_KEY` dan `BASE_AI_URL`, atau file `.env` di direktori kerja.
-
----
-
-### `SetAPIKey(apiKey string)` & `SetBaseURL(baseURL string)`
-
-Mengatur API key atau base URL secara terpisah, tanpa mengubah nilai yang lain.
-
-```go
-goaipackage.SetAPIKey("sk-xxx")
-goaipackage.SetBaseURL("https://openrouter.ai/api/v1")
-```
 
 ---
 
@@ -285,37 +278,13 @@ link := goaipackage.NewMCPLink(goaipackage.WithMCPLink("./mcp_server/server.go")
 client, tools, err := goaipackage.ConnectAndLoadKnownTools(ctx, link)
 ```
 
----
+Fungsi ini otomatis melakukan:
+1. Membuka koneksi MCP client (`SSE` atau `Stdio`).
+2. Mengambil daftar tool yang tersedia dari MCP server.
+3. Mendaftarkan tool ke registry internal package untuk validasi tool call.
 
-### `FetchMCPTools(ctx, client) ([]mcp.Tool, error)`
-
-Mengambil daftar tool dari MCP server yang sudah terkoneksi.
-
-```go
-tools, err := goaipackage.FetchMCPTools(ctx, client)
-```
-
----
-
-### `NewServerConnection() (*client.Client, error)`
-
-Koneksi default ke MCP server lokal (`../mcp_server/server.go`). Shortcut tanpa konfigurasi.
-
----
-
-### `ShrinkToolCatalog(tools []mcp.Tool) []mcp.Tool`
-
-Memangkas deskripsi tool untuk menghemat token prompt. Dicoba via CLI `caveman-shrink` dulu, fallback ke minifier bawaan Go.
-
-```go
-tools = goaipackage.ShrinkToolCatalog(tools) // pangkas sebelum dikirim ke CallTools
-```
-
----
-
-### `UpdateKnownTools(tools []mcp.Tool)`
-
-Mendaftarkan tool ke registry internal. Dipanggil otomatis oleh `ConnectAndLoadKnownTools`.
+> [!NOTE]
+> Pemangkasan token/kompresi deskripsi tool (*Caveman compression*) sudah berjalan **otomatis** di dalam `CallTools` / `ExecuteAgentTools`, sehingga pengguna tidak perlu memproses atau memangkas katalog tool secara manual.
 
 ---
 

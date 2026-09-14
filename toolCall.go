@@ -42,8 +42,8 @@ var (
 	knownToolList []string
 )
 
-// UpdateKnownTools populates the known tools from the available MCP tools.
-func UpdateKnownTools(tools []mcp.Tool) {
+// updateKnownTools populates the known tools from the available MCP tools.
+func updateKnownTools(tools []mcp.Tool) {
 	knownToolsMu.Lock()
 	defer knownToolsMu.Unlock()
 
@@ -89,8 +89,8 @@ type ToolExecutionResult struct {
 	Result any            `json:"result"`
 }
 
-// ShrinkToolCatalog shrinks the MCP tool catalog before it hits the prompt using caveman-shrink CLI or fallback native minifier.
-func ShrinkToolCatalog(tools []mcp.Tool) []mcp.Tool {
+// shrinkToolCatalog shrinks the MCP tool catalog before it hits the prompt using caveman-shrink CLI or fallback native minifier.
+func shrinkToolCatalog(tools []mcp.Tool) []mcp.Tool {
 	if len(tools) == 0 {
 		return tools
 	}
@@ -125,11 +125,11 @@ func ShrinkToolCatalog(tools []mcp.Tool) []mcp.Tool {
 	}
 
 	// Fallback to native Caveman compression
-	return NativeCavemanShrink(tools)
+	return nativeCavemanShrink(tools)
 }
 
-// NativeCavemanShrink provides a fast, zero-dependency token minifier for tool descriptions and schemas.
-func NativeCavemanShrink(tools []mcp.Tool) []mcp.Tool {
+// nativeCavemanShrink provides a fast, zero-dependency token minifier for tool descriptions and schemas.
+func nativeCavemanShrink(tools []mcp.Tool) []mcp.Tool {
 	fillerRegex := regexp.MustCompile(`(?i)\b(a|an|the|this|that|these|those|is|are|was|were|will|would|should|can|could|to|for|of|in|on|at|by|with|from|lookup|fetches|retrieves|information|data|details|specific|internal|system)\b`)
 	spacesRegex := regexp.MustCompile(`\s+`)
 
@@ -150,9 +150,9 @@ func NativeCavemanShrink(tools []mcp.Tool) []mcp.Tool {
 
 // 1. Setup & Connection
 
-// NewServerConnectionWithLink connects to an MCP server using an MCPLink.
+// newServerConnectionWithLink connects to an MCP server using an MCPLink.
 // It supports HTTP/HTTPS (SSE) URLs as well as local scripts/executables via Stdio.
-func NewServerConnectionWithLink(ctx context.Context, mcpLink MCPLink) (*client.Client, error) {
+func newServerConnectionWithLink(ctx context.Context, mcpLink MCPLink) (*client.Client, error) {
 	var c *client.Client
 	var err error
 
@@ -186,8 +186,8 @@ func NewServerConnectionWithLink(ctx context.Context, mcpLink MCPLink) (*client.
 	return c, nil
 }
 
-// FetchMCPTools queries the MCP server to retrieve all registered tools.
-func FetchMCPTools(ctx context.Context, c *client.Client) ([]mcp.Tool, error) {
+// fetchMCPTools queries the MCP server to retrieve all registered tools.
+func fetchMCPTools(ctx context.Context, c *client.Client) ([]mcp.Tool, error) {
 	res, err := c.ListTools(ctx, mcp.ListToolsRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tools from MCP server: %w", err)
@@ -198,23 +198,18 @@ func FetchMCPTools(ctx context.Context, c *client.Client) ([]mcp.Tool, error) {
 // ConnectAndLoadKnownTools connects to the MCP server via MCPLink,
 // fetches all available tools, and populates knownTools automatically.
 func ConnectAndLoadKnownTools(ctx context.Context, mcpLink MCPLink) (*client.Client, []mcp.Tool, error) {
-	c, err := NewServerConnectionWithLink(ctx, mcpLink)
+	c, err := newServerConnectionWithLink(ctx, mcpLink)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	tools, err := FetchMCPTools(ctx, c)
+	tools, err := fetchMCPTools(ctx, c)
 	if err != nil {
 		return c, nil, err
 	}
 
-	UpdateKnownTools(tools)
+	updateKnownTools(tools)
 	return c, tools, nil
-}
-
-// NewServerConnection provides default backward-compatible connection.
-func NewServerConnection() (*client.Client, error) {
-	return NewServerConnectionWithLink(context.Background(), MCPLink{})
 }
 
 func filterRoles(mcp_tools []mcp.Tool, role string) []mcp.Tool {
