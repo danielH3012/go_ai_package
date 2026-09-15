@@ -8,7 +8,7 @@ Library AI Agent Go modular untuk membangun chatbot berbasis MCP (Model Context 
 
 1. [Konfigurasi Global](#1-konfigurasi-global)
 2. [Tiga Agen Utama AI](#2-tiga-agen-utama-ai)
-3. [Koneksi MCP & Tool Execution](#3-koneksi-mcp--tool-execution)
+3. [Koneksi MCP, Tool Execution & Identifier Engine](#3-koneksi-mcp--tool-execution)
 4. [RBAC (Role-Based Access Control)](#4-rbac-role-based-access-control)
 5. [Database Riwayat Chat](#5-database-riwayat-chat)
 6. [Ekstraksi Dokumen & OCR](#6-ekstraksi-dokumen--ocr)
@@ -160,7 +160,7 @@ intentJSON, err := goaipackage.SearchIntent(
 
 ### Agen 2: `CallTools`
 
-Menjalankan reasoning loop multi-turn: pilih tool → eksekusi tool (paralel) → ekstrak fakta → ulangi jika data belum cukup. Menegakkan RBAC secara otomatis.
+Menjalankan reasoning loop multi-turn: pilih tool → eksekusi tool (paralel untuk Read, sekuensial aman untuk Write) → ekstrak fakta → ulangi jika data belum cukup. Menegakkan RBAC dan resolusi ID secara otomatis.
 
 ```go
 func CallTools(
@@ -285,6 +285,45 @@ Fungsi ini otomatis melakukan:
 
 > [!NOTE]
 > Pemangkasan token/kompresi deskripsi tool (*Caveman compression*) sudah berjalan **otomatis** di dalam `CallTools` / `ExecuteAgentTools`, sehingga pengguna tidak perlu memproses atau memangkas katalog tool secara manual.
+
+---
+
+### Toleransi Penamaan ID & Resolusi Otomatis (Identifier Engine)
+
+Developer **tidak perlu khawatir atau bingung** memikirkan aturan kaku konvensi penamaan ID saat membuat tool MCP maupun merancang skema database. Package ini dilengkapi mesin resolusi cerdas (*Identifier Engine*) yang memberikan kebebasan dan fleksibilitas penuh:
+
+#### 1. Bebas Memilih Gaya Penamaan Parameter ID
+Sistem mengenali parameter ID dalam berbagai format penamaan secara otomatis, baik awalan (*prefix* khas database lokal/Indonesia), akhiran (*suffix* standar internasional), camelCase, maupun snake_case:
+
+| Gaya Penamaan | Contoh Parameter | Status | Keterangan |
+|---|---|---|---|
+| **Prefix (Database Indonesia)** | `id_asset`, `id_barang`, `id_user`, `id_transaksi_pembelian` | ✅ Didukung Otomatis | Mengupas entitas menjadi `asset`, `barang`, dsb. |
+| **Prefix (camelCase / PascalCase)** | `idAsset`, `idBarang`, `idUser`, `IDAsset`, `ID_USER` | ✅ Didukung Otomatis | Menyesuaikan huruf kapital secara otomatis |
+| **Suffix (Standar Internasional)** | `asset_id`, `barang_id`, `user_id`, `invoice_id` | ✅ Didukung Otomatis | Mengupas entitas menjadi `asset`, `barang`, dsb. |
+| **Suffix (camelCase)** | `assetId`, `barangId`, `userId`, `ASSET_ID` | ✅ Didukung Otomatis | Format camelCase & uppercase standar |
+| **Generic ID** | `id`, `_id`, `ID` | ✅ Didukung Otomatis | Otomatis dipasangkan ke entitas nama tool |
+
+> [!TIP]
+> **Tidak ada penalti beda nama!** Jika parameter di tool MCP Anda bernama `id_asset`, tetapi kolom di database backend Anda bernama `asset_id` (atau sebaliknya), mesin [inferIdField](file:///c:/Users/user/OneDrive/Documents/proyek_DH/QTERA/go_ai_package/identifier.go#L438) secara otomatis menjembatani dan mencocokkan kedua nama kolom tersebut tanpa konfigurasi manual.
+
+#### 2. Bebas Menggunakan Format Nilai ID Apa Saja
+Database Anda bebas menggunakan format kode atau angka ID apa pun; mesin [looksCanonicalID](file:///c:/Users/user/OneDrive/Documents/proyek_DH/QTERA/go_ai_package/identifier.go#L309) mengenali semua pola berikut secara otomatis:
+
+* **Format Awalan Kode (Prefix):** `AST-001`, `INV/2026/001`, `SKU-XYZ-99`
+* **Format Akhiran Kode (Suffix):** `001-AST`, `1001-FIN`, `TX-999-ID`
+* **Format Angka Murni (Auto-Increment / Padded):** `1`, `42`, `105`, `00123`
+* **Format UUID:** `550e8400-e29b-41d4-a716-446655440000`
+
+#### 3. Resolusi Nama ke ID Otomatis (*Fuzzy Auto-Correction*)
+Pengguna akhir di UI chat tidak perlu mengingat atau menghafal nomor ID teknis. Jika user menyebut nama barang atau entitas:
+* User chat: *"Tolong hapus meja rapat jati"*
+* AI memanggil: `delete_asset(id="meja rapat jati")` *(bukan ID resmi)*
+* Sistem otomatis mencari ke data referensi sebelumnya, mencocokkan *"meja rapat jati"*, dan mengoreksi parameternya menjadi `id: "AST-042"`.
+
+#### 4. Proteksi Keamanan Data Ambigu (*Ambiguity Guard*)
+Jika pengguna menyebut nama yang memiliki beberapa varian mirip di database (misal user minta update *"Dell"* padahal ada *"Dell Inspiron"* dan *"Dell XPS"*):
+* Pada operasi baca (*Read*), sistem memilih hasil yang paling relevan.
+* Pada operasi mutasi data (*Write / Delete / Update*), sistem **secara otomatis menolak menebak sendiri** demi mencegah terjadinya salah edit atau salah hapus data penting.
 
 ---
 
