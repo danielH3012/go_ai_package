@@ -1,6 +1,7 @@
 package goaipackage
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -105,6 +106,7 @@ type RecordMatch struct {
 	IDField    string
 	IDValue    any
 	Score      float64
+	Ambiguous  bool
 }
 
 func bestMatch(value string, records []map[string]any, idField string, threshold float64) *RecordMatch {
@@ -113,7 +115,10 @@ func bestMatch(value string, records []map[string]any, idField string, threshold
 	}
 
 	var best *RecordMatch
+	var secondBestScore float64
+
 	for _, r := range records {
+		currID := fmt.Sprintf("%v", r[idField])
 		for fieldName, fieldVal := range r {
 			fieldStr, ok := fieldVal.(string)
 			if !ok {
@@ -123,7 +128,11 @@ func bestMatch(value string, records []map[string]any, idField string, threshold
 			if score < threshold {
 				continue
 			}
+
 			if best == nil || score > best.Score {
+				if best != nil && currID != fmt.Sprintf("%v", best.IDValue) {
+					secondBestScore = best.Score
+				}
 				best = &RecordMatch{
 					Record:     r,
 					Field:      fieldName,
@@ -132,8 +141,15 @@ func bestMatch(value string, records []map[string]any, idField string, threshold
 					IDValue:    r[idField],
 					Score:      score,
 				}
+			} else if currID != fmt.Sprintf("%v", best.IDValue) && score > secondBestScore {
+				secondBestScore = score
 			}
 		}
+	}
+
+	// If there is another record with an almost identical score (diff < 0.08), flag as ambiguous
+	if best != nil && secondBestScore > 0 && (best.Score-secondBestScore) < 0.08 {
+		best.Ambiguous = true
 	}
 
 	return best

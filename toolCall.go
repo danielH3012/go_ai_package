@@ -356,6 +356,12 @@ func tryParseToolCalls(text string) []ToolCall {
 	if len(calls) > 0 {
 		return calls
 	}
+	// 5. Fallback: heuristic tool mention with ID regex (skip if text is an educational/tutorial explanation)
+	tutorialPattern := regexp.MustCompile(`(?i)\b(contoh|misalnya|sebagai contoh|for example|e\.g\.|you can use|anda bisa menggunakan|cara menggunakan|tutorial|documentation)\b`)
+	if tutorialPattern.MatchString(text) {
+		return nil
+	}
+
 	for _, tool := range getKnownToolList() {
 		baseName := strings.TrimSuffix(tool, "s")
 		pattern := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(baseName) + `s?(?:\(\))?\b`)
@@ -799,24 +805,42 @@ func parseSingleCallJson(raw string) *ToolCall {
 }
 
 // 3. Tool Execution
-// run the goddamn tools but in parallel
+// executeToolsParallel runs read-only tools concurrently, but executes mutating/write
+// tools sequentially in order to preserve causal dependency and prevent database race conditions.
 func executeToolsParallel(ctx context.Context, client *client.Client, toolCalls []ToolCall, mcpTools []mcp.Tool, auth UserAuth) []ToolExecutionResult {
 	if len(toolCalls) == 0 {
 		return nil
 	}
 
 	results := make([]ToolExecutionResult, len(toolCalls))
-	var wg sync.WaitGroup
 
-	for i, tc := range toolCalls {
-		wg.Add(1)
-		go func(idx int, call ToolCall) {
-			defer wg.Done()
-			results[idx] = executeSingleTool(ctx, client, call.Name, call.Arguments, mcpTools, auth)
-		}(i, tc)
+	// Check if any tool call is a mutating/write operation
+	hasWrite := false
+	for _, tc := range toolCalls {
+		if !isReadOnlyTool(tc.Name) {
+			hasWrite = true
+			break
+		}
 	}
 
-	wg.Wait()
+	if !hasWrite {
+		// All tools are read-only: run all concurrently in parallel
+		var wg sync.WaitGroup
+		for i, tc := range toolCalls {
+			wg.Add(1)
+			go func(idx int, call ToolCall) {
+				defer wg.Done()
+				results[idx] = executeSingleTool(ctx, client, call.Name, call.Arguments, mcpTools, auth)
+			}(i, tc)
+		}
+		wg.Wait()
+		return results
+	}
+
+	// Mutating/write tools present: execute sequentially to avoid race conditions & preserve causal order
+	for i, tc := range toolCalls {
+		results[i] = executeSingleTool(ctx, client, tc.Name, tc.Arguments, mcpTools, auth)
+	}
 	return results
 }
 
@@ -917,12 +941,16 @@ func formatMultiRawDataForLlm(accumulatedResults []ToolExecutionResult) string {
 	return strings.Join(blocks, "\n\n")
 }
 
-// formatRawDataForLlm compresses and formats raw API result data compactly to minimize prompt tokens.
+const MaxToolResultChars = 6000
+
+// formatRawDataForLlm compresses and formats raw API result data compactly to minimize prompt tokens,
+// capping output to avoid context window overflow.
 func formatRawDataForLlm(result any) string {
 	if result == nil {
 		return "None"
 	}
 
+	var formatted string
 	switch v := result.(type) {
 	case string:
 		vTrimmed := strings.TrimSpace(v)
@@ -930,14 +958,25 @@ func formatRawDataForLlm(result any) string {
 		var parsed any
 		if err := json.Unmarshal([]byte(vTrimmed), &parsed); err == nil {
 			if compacted, err := json.Marshal(parsed); err == nil {
-				return string(compacted)
+				formatted = string(compacted)
+			} else {
+				formatted = vTrimmed
 			}
+		} else {
+			formatted = vTrimmed
 		}
-		return vTrimmed
 	default:
 		if b, err := json.Marshal(result); err == nil {
-			return string(b)
+			formatted = string(b)
+		} else {
+			formatted = fmt.Sprintf("%v", result)
 		}
-		return fmt.Sprintf("%v", result)
 	}
+
+	// Truncate oversized output to prevent blowing up the LLM context window
+	if len(formatted) > MaxToolResultChars {
+		formatted = formatted[:MaxToolResultChars] + "\n... [Data truncated to prevent context window overflow. Please narrow your query]"
+	}
+
+	return formatted
 }

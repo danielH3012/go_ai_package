@@ -3,8 +3,10 @@ package goaipackage
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -152,6 +154,10 @@ func resolveWriteCall(fnName string, args map[string]any, mcpTools []mcp.Tool, a
 			continue // Already a valid ID
 		}
 		if m := bestMatch(supplied, records, idField, 0.6); m != nil {
+			if m.Ambiguous {
+				log.Printf("[resolveIdentifiers] Ambiguous match for write call %s (%s=%q): skipping auto-correct to prevent unintended modification", fnName, p, supplied)
+				continue
+			}
 			if idVal, ok := m.Record[idField]; ok {
 				args[p] = idVal
 				log.Printf("[resolveIdentifiers] Auto-corrected %s: %q -> %v via '%s'", p, supplied, idVal, resolverTool)
@@ -180,6 +186,10 @@ func resolveWriteCall(fnName string, args map[string]any, mcpTools []mcp.Tool, a
 			continue
 		}
 		if m = bestMatch(val, records, idField, 0.6); m != nil {
+			if m.Ambiguous {
+				log.Printf("[resolveIdentifiers] Ambiguous match for write call %s via lookup param '%s': skipping auto-resolve to prevent unintended modification", fnName, lp)
+				continue
+			}
 			if idVal, ok := m.Record[idField]; ok {
 				args[pendingID] = idVal
 				log.Printf("[resolveIdentifiers] Auto-resolved %s id to %v via lookup param '%s'", fnName, idVal, lp)
@@ -196,31 +206,78 @@ func resolveWriteCall(fnName string, args map[string]any, mcpTools []mcp.Tool, a
 	}
 }
 
+// idAffix represents an ID token found at the start or end of a name.
+type idAffix struct {
+	token    string
+	isPrefix bool
+}
+
+// parseIDAffix inspects whether a parameter name is shaped like an ID (either prefix or suffix).
+// Supports:
+// - exact: "id", "Id", "ID", "_id", "id_"
+// - suffix: "asset_id", "assetId", "assetID", "ASSET_ID"
+// - prefix: "id_asset", "ID_ASSET", "_id_asset", "idAsset", "IDAsset"
+// Correctly rejects non-id words like "valid", "avoid", "identity", "idle", "idea".
+func parseIDAffix(name string) (idAffix, bool) {
+	nameTrimmed := strings.TrimSpace(name)
+	l := len(nameTrimmed)
+	if l < 2 {
+		return idAffix{}, false
+	}
+
+	lower := strings.ToLower(nameTrimmed)
+	if lower == "id" || lower == "_id" || lower == "id_" {
+		return idAffix{token: nameTrimmed, isPrefix: false}, true
+	}
+
+	// 1. Suffix checks (e.g. asset_id, assetId, assetID)
+	if l >= 3 && strings.HasSuffix(lower, "_id") {
+		return idAffix{token: nameTrimmed[l-3:], isPrefix: false}, true
+	}
+	tail2 := nameTrimmed[l-2:]
+	if tail2 == "Id" || tail2 == "ID" || tail2 == "iD" {
+		return idAffix{token: tail2, isPrefix: false}, true
+	}
+
+	// 2. Prefix checks
+	// Snake-case prefixes: "_id_", "id_", "ID_"
+	if strings.HasPrefix(lower, "_id_") && l > 4 {
+		return idAffix{token: nameTrimmed[:4], isPrefix: true}, true
+	}
+	if strings.HasPrefix(lower, "id_") && l > 3 {
+		return idAffix{token: nameTrimmed[:3], isPrefix: true}, true
+	}
+
+	// CamelCase prefixes (e.g. idAsset, IDAsset)
+	if strings.HasPrefix(nameTrimmed, "id") && l > 2 {
+		r := rune(nameTrimmed[2])
+		if unicode.IsUpper(r) {
+			return idAffix{token: nameTrimmed[:2], isPrefix: true}, true
+		}
+	}
+	if strings.HasPrefix(nameTrimmed, "ID") && l > 2 {
+		r := rune(nameTrimmed[2])
+		if unicode.IsUpper(r) {
+			return idAffix{token: nameTrimmed[:2], isPrefix: true}, true
+		}
+	}
+
+	return idAffix{}, false
+}
+
 func isIDParamName(name string) bool {
-	_, ok := idTail(name)
+	_, ok := parseIDAffix(name)
 	return ok
 }
 
 // idTail returns the trailing id token of a name (entity+id forms like "asset_id", "assetId",
-// "assetID", "ASSET_ID") and whether the name is id-shaped. Case-tolerant across Id/ID/iD/_id.
-// Non-id words that merely end with lowercase "id" ("avoid", "valid") are correctly rejected.
+// "assetID", "ASSET_ID") or prefix if present, and whether the name is id-shaped.
 func idTail(name string) (string, bool) {
-	l := len(name)
-	if l < 2 {
+	affix, ok := parseIDAffix(name)
+	if !ok {
 		return "", false
 	}
-	if strings.ToLower(name) == "id" {
-		return name, true
-	}
-	if l >= 3 && strings.HasSuffix(strings.ToLower(name), "_id") {
-		return name[l-3:], true
-	}
-	tail := name[l-2:]
-	switch tail {
-	case "Id", "ID", "iD":
-		return tail, true
-	}
-	return "", false
+	return affix.token, true
 }
 
 func recordHasExactID(value string, records []map[string]any, idField string) bool {
@@ -232,34 +289,94 @@ func recordHasExactID(value string, records []map[string]any, idField string) bo
 	return false
 }
 
-// looksCanonicalID reports whether value already carries the common prefix of the resolver's
-// present in the cached records yet.
-func looksCanonicalID(value string, records []map[string]any, idField string) bool {
-	if value == "" || len(records) == 0 {
+var uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func isDigitsOnly(s string) bool {
+	if len(s) == 0 {
 		return false
 	}
-
-	prefix := ""
-	first := true
-	for _, r := range records {
-		v := strings.TrimSpace(strings.ToLower(fmt.Sprintf("%v", r[idField])))
-		if v == "" || v == "<nil>" {
-			continue
-		}
-		if first {
-			prefix = v
-			first = false
-			continue
-		}
-		for len(prefix) > 0 && !strings.HasPrefix(v, prefix) {
-			prefix = prefix[:len(prefix)-1]
-		}
-		if prefix == "" {
+	for _, r := range s {
+		if r < '0' || r > '9' {
 			return false
 		}
 	}
+	return true
+}
 
-	return len(prefix) >= 3 && strings.HasPrefix(strings.ToLower(value), prefix)
+// looksCanonicalID reports whether value already carries the canonical shape of the resolver's
+// IDs (e.g. common prefix like "AST-", common suffix like "-AST", UUID format, or pure numeric ID)
+// even if that specific ID record is not present in the cached records yet.
+func looksCanonicalID(value string, records []map[string]any, idField string) bool {
+	val := strings.TrimSpace(strings.ToLower(value))
+	if val == "" || len(records) == 0 {
+		return false
+	}
+
+	var recIDs []string
+	for _, r := range records {
+		v := strings.TrimSpace(strings.ToLower(fmt.Sprintf("%v", r[idField])))
+		if v != "" && v != "<nil>" {
+			recIDs = append(recIDs, v)
+		}
+	}
+	if len(recIDs) == 0 {
+		return false
+	}
+
+	// 1. UUID Check: if value is a UUID and existing records also use UUIDs
+	if uuidRegex.MatchString(val) {
+		for _, rid := range recIDs {
+			if uuidRegex.MatchString(rid) {
+				return true
+			}
+		}
+	}
+
+	// 2. Pure Numeric ID Check: if value is digits and existing records are also purely digits
+	if isDigitsOnly(val) {
+		allDigits := true
+		for _, rid := range recIDs {
+			if !isDigitsOnly(rid) {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return true
+		}
+	}
+
+	// 3. Common Prefix Check: e.g. "AST-001", "AST-002" -> common prefix "ast-"
+	prefix := recIDs[0]
+	for _, rid := range recIDs[1:] {
+		for len(prefix) > 0 && !strings.HasPrefix(rid, prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
+		if prefix == "" {
+			break
+		}
+	}
+	prefix = strings.TrimRight(prefix, "0123456789")
+	if len(prefix) >= 3 && strings.HasPrefix(val, prefix) {
+		return true
+	}
+
+	// 4. Common Suffix Check: e.g. "001-AST", "002-AST" -> common suffix "-ast"
+	suffix := recIDs[0]
+	for _, rid := range recIDs[1:] {
+		for len(suffix) > 0 && !strings.HasSuffix(rid, suffix) {
+			suffix = suffix[1:]
+		}
+		if suffix == "" {
+			break
+		}
+	}
+	suffix = strings.TrimLeft(suffix, "0123456789")
+	if len(suffix) >= 3 && strings.HasSuffix(val, suffix) {
+		return true
+	}
+
+	return false
 }
 
 // cek llm isi param dengan bener apa kagak
@@ -327,11 +444,27 @@ func inferIdField(records []map[string]any, paramName string) string {
 	candidates := []string{
 		paramName,
 		strings.ReplaceAll(paramName, "_id", "Id"),
+		strings.ReplaceAll(paramName, "id_", "id"),
+		strings.ReplaceAll(paramName, "ID_", "id"),
 		"id",
 		"Id",
 		"_id",
 		"ID",
 		"iD",
+	}
+
+	// Cross-check alternative conventions (e.g. tool uses id_asset, db uses asset_id)
+	if entity := entityFromIDParam(paramName); entity != "" {
+		candidates = append(candidates,
+			entity+"_id",
+			entity+"Id",
+			entity+"ID",
+			"id_"+entity,
+			"id_"+strings.ToLower(entity),
+		)
+		if len(entity) > 0 {
+			candidates = append(candidates, "id"+strings.ToUpper(entity[:1])+entity[1:])
+		}
 	}
 
 	for _, candidate := range candidates {
@@ -342,7 +475,7 @@ func inferIdField(records []map[string]any, paramName string) string {
 
 	var idKeys []string
 	for k := range sample {
-		if _, ok := idTail(k); ok {
+		if isIDParamName(k) {
 			idKeys = append(idKeys, k)
 		}
 	}
@@ -528,11 +661,16 @@ func inferResolverMap(mcpTools []mcp.Tool) map[string]string {
 }
 
 func entityFromIDParam(name string) string {
-	tail, ok := idTail(name)
+	affix, ok := parseIDAffix(name)
 	if !ok {
 		return ""
 	}
-	return strings.TrimSuffix(name, tail)
+	if affix.isPrefix {
+		entity := strings.TrimPrefix(name, affix.token)
+		return strings.Trim(entity, "_")
+	}
+	entity := strings.TrimSuffix(name, affix.token)
+	return strings.Trim(entity, "_")
 }
 
 func entityFromToolName(name string) string {
