@@ -431,8 +431,12 @@ goaipackage.SetRBACRules(rbac)
 ```
 
 > [!IMPORTANT]
-> Role string bersifat **case-insensitive** dan di-trim otomatis. `"Admin"`, `"ADMIN"`, `"admin"` dianggap sama.
-> Jika role tidak ada di peta RBAC, `CallTools` langsung mengembalikan pesan "tidak punya izin".
+> - Role string dan nama tool bersifat **case-insensitive** dan di-trim otomatis (`"Admin"`, `"admin"`, `"SEARCH_TOKOPEDIA"`, `"search_tokopedia"` dianggap sama).
+> - Mendukung **wildcard**:
+>   - Role `"*"`: aturan default untuk role apapun yang tidak terdaftar spesifik.
+>   - Tool `"*"` atau `"all"`: memberikan akses ke seluruh tool MCP untuk role tersebut (misal `"admin": {"*"}`).
+> - Jika peta RBAC belum diset, semua tool diizinkan secara default (*unconfigured permissive mode*).
+> - Role tanpa tool (misal `"guest": {}`) tetap dapat melakukan percakapan umum/sapaan (*no tools needed*), namun jika meminta eksekusi tool apapun akan langsung ditolak dengan pesan izin tanpa mengeksekusi tool.
 
 ---
 

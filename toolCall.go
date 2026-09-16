@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,8 +18,10 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// ROLE_TOOL_PERMISSIONS defines accessible tools per user role.
-var ROLE_TOOL_PERMISSIONS = make(map[string][]string)
+var (
+	rbacMu                sync.RWMutex
+	ROLE_TOOL_PERMISSIONS = make(map[string][]string)
+)
 
 // SetRBACRules sets accessible tools per role using an RBACRule instance.
 func SetRBACRules(rbac RBACRule) {
@@ -29,9 +30,20 @@ func SetRBACRules(rbac RBACRule) {
 
 // SetRBACMap sets accessible tools per role directly using map[string][]string.
 func SetRBACMap(rules map[string][]string) {
+	rbacMu.Lock()
+	defer rbacMu.Unlock()
+
 	perms := make(map[string][]string)
 	for role, tools := range rules {
-		perms[strings.ToLower(strings.TrimSpace(role))] = tools
+		roleKey := strings.ToLower(strings.TrimSpace(role))
+		var cleanTools []string
+		for _, tool := range tools {
+			cTool := strings.TrimSpace(tool)
+			if cTool != "" {
+				cleanTools = append(cleanTools, cTool)
+			}
+		}
+		perms[roleKey] = cleanTools
 	}
 	ROLE_TOOL_PERMISSIONS = perms
 }
@@ -213,21 +225,88 @@ func ConnectAndLoadKnownTools(ctx context.Context, mcpLink MCPLink) (*client.Cli
 }
 
 func filterRoles(mcp_tools []mcp.Tool, role string) []mcp.Tool {
+	rbacMu.RLock()
+	defer rbacMu.RUnlock()
+
 	if len(mcp_tools) == 0 {
 		return nil
 	}
+	// If RBAC rules are not configured, all tools are permitted by default
+	if len(ROLE_TOOL_PERMISSIONS) == 0 {
+		dst := make([]mcp.Tool, len(mcp_tools))
+		copy(dst, mcp_tools)
+		return dst
+	}
+
 	role_key := strings.ToLower(strings.TrimSpace(role))
 	allowed, ok := ROLE_TOOL_PERMISSIONS[role_key]
 	if !ok {
-		return nil
+		// Fallback to wildcard "*" role if defined
+		if wildcardAllowed, hasWildcard := ROLE_TOOL_PERMISSIONS["*"]; hasWildcard {
+			allowed = wildcardAllowed
+			ok = true
+		} else {
+			return nil
+		}
 	}
+
+	// Check if allowed contains wildcard "*" or "all"
+	for _, a := range allowed {
+		cleanA := strings.TrimSpace(strings.ToLower(a))
+		if cleanA == "*" || cleanA == "all" {
+			dst := make([]mcp.Tool, len(mcp_tools))
+			copy(dst, mcp_tools)
+			return dst
+		}
+	}
+
 	var tool_filtered []mcp.Tool
 	for _, t := range mcp_tools {
-		if slices.Contains(allowed, t.Name) {
-			tool_filtered = append(tool_filtered, t)
+		tClean := strings.Trim(strings.ToLower(t.Name), "_")
+		for _, a := range allowed {
+			aClean := strings.Trim(strings.ToLower(a), "_")
+			if aClean == tClean || strings.EqualFold(t.Name, strings.TrimSpace(a)) {
+				tool_filtered = append(tool_filtered, t)
+				break
+			}
 		}
 	}
 	return tool_filtered
+}
+
+// isRolePermittedForTool checks if a role has permission to execute a specific tool.
+func isRolePermittedForTool(role string, toolName string) bool {
+	cleanTarget := strings.Trim(strings.ToLower(strings.TrimSpace(toolName)), "_")
+	if cleanTarget == "" || cleanTarget == "no_tools" || cleanTarget == "no_tool" || cleanTarget == "none" {
+		return true
+	}
+
+	rbacMu.RLock()
+	defer rbacMu.RUnlock()
+
+	// If no RBAC configured, allow all
+	if len(ROLE_TOOL_PERMISSIONS) == 0 {
+		return true
+	}
+
+	role_key := strings.ToLower(strings.TrimSpace(role))
+	allowed, ok := ROLE_TOOL_PERMISSIONS[role_key]
+	if !ok {
+		if wildcardAllowed, hasWildcard := ROLE_TOOL_PERMISSIONS["*"]; hasWildcard {
+			allowed = wildcardAllowed
+			ok = true
+		} else {
+			return false
+		}
+	}
+
+	for _, a := range allowed {
+		aClean := strings.Trim(strings.ToLower(strings.TrimSpace(a)), "_")
+		if aClean == "*" || aClean == "all" || aClean == cleanTarget || strings.EqualFold(toolName, strings.TrimSpace(a)) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildToolGuide formats available MCP tools and descriptions into markdown list for the system prompt.

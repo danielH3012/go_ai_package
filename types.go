@@ -167,7 +167,8 @@ type IntentResult struct {
 	IsDelete   bool     `json:"is_delete,omitempty"`
 	IsUpdate   bool     `json:"is_update,omitempty"`
 	IsReport   bool     `json:"is_report,omitempty"`
-	IsOffTopic bool     `json:"is_off_topic,omitempty"`
+	IsOffTopic  bool     `json:"is_off_topic,omitempty"`
+	IsPermitted bool     `json:"is_permitted"`
 }
 
 func (r *IntentResult) ToJSON() (string, error) {

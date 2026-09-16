@@ -584,8 +584,12 @@ IMPORTANT: Output ONLY the raw JSON object. Do not include markdown codeblocks o
 		}
 	}
 
-	log.Printf("[searchIntent] Query: %q -> Category: %q, TargetTool: %q, IsMutation: %t, IsDelete: %t, IsUpdate: %t, IsReport: %t, IsOffTopic: %t",
-		query, result.Category, result.TargetTool, result.IsMutation, result.IsDelete, result.IsUpdate, result.IsReport, result.IsOffTopic)
+	userAuth := ToUserAuth(userContext)
+	role := strings.ToLower(strings.TrimSpace(userAuth.Role))
+	result.IsPermitted = isRolePermittedForTool(role, result.TargetTool)
+
+	log.Printf("[searchIntent] Query: %q -> Category: %q, TargetTool: %q, IsMutation: %t, IsDelete: %t, IsUpdate: %t, IsReport: %t, IsOffTopic: %t, IsPermitted: %t",
+		query, result.Category, result.TargetTool, result.IsMutation, result.IsDelete, result.IsUpdate, result.IsReport, result.IsOffTopic, result.IsPermitted)
 
 	return result
 }
@@ -621,10 +625,6 @@ func executeCallTools(ctx context.Context, client *client.Client, mcpTools []mcp
 	userAuth := ToUserAuth(userContext)
 	role := strings.ToLower(strings.TrimSpace(userAuth.Role))
 	availableTools := filterRoles(mcpTools, role)
-	if len(availableTools) == 0 {
-		return &AgentResult{Context: "I do not have permissions or tools to access that information."}, nil
-	}
-	updateKnownTools(availableTools)
 
 	if model == "" {
 		model = GeneratorModel
@@ -645,9 +645,21 @@ func executeCallTools(ctx context.Context, client *client.Client, mcpTools []mcp
 	}
 
 	// 3. RBAC permission check: if intent requires a tool, verify it exists in availableTools
-	if intent.TargetTool != "" && intent.TargetTool != "no_tools" && !hasTool(availableTools, intent.TargetTool) {
-		log.Printf("[callTools] Blocked query (%s): tool %q not permitted for role %s", intent.Category, intent.TargetTool, role)
-		return &AgentResult{Context: fmt.Sprintf("You do not have permission to use %s.", intent.TargetTool)}, nil
+	if intent.TargetTool != "" && intent.TargetTool != "no_tools" && intent.TargetTool != "no_tool" {
+		if !hasTool(availableTools, intent.TargetTool) {
+			log.Printf("[callTools] Blocked query (%s): tool %q not permitted for role %s", intent.Category, intent.TargetTool, role)
+			return &AgentResult{Context: fmt.Sprintf("You do not have permission to use %s.", intent.TargetTool)}, nil
+		}
+	} else if len(intent.Tools) > 0 {
+		for _, reqTool := range intent.Tools {
+			if reqTool != "no_tools" && reqTool != "no_tool" && !hasTool(availableTools, reqTool) {
+				log.Printf("[callTools] Blocked query (%s): tool %q not permitted for role %s", intent.Category, reqTool, role)
+				return &AgentResult{Context: fmt.Sprintf("You do not have permission to use %s.", reqTool)}, nil
+			}
+		}
+	} else if len(availableTools) == 0 && intent.TargetTool != "no_tools" && intent.TargetTool != "no_tool" {
+		log.Printf("[callTools] Blocked query: no tools permitted for role %s", role)
+		return &AgentResult{Context: "You do not have permission to use tools."}, nil
 	}
 
 	// Apply Caveman tool catalog compression skill
@@ -747,19 +759,26 @@ If NO tools are needed:
 		rawOutput := res.RawOutput
 		log.Printf("[callTools] Iteration %d LLM output: %s", iteration, rawOutput)
 
-		toolCalls := tryParseToolCalls(rawOutput)
+		rawCalls := tryParseToolCalls(rawOutput)
 
 		// Filter out any tool calls not present in availableTools
 		var authorizedCalls []ToolCall
-		for _, tc := range toolCalls {
+		var droppedCalls []ToolCall
+		for _, tc := range rawCalls {
 			if tc.Name == "no_tools" || tc.Name == "no_tool" || hasTool(availableTools, tc.Name) {
 				authorizedCalls = append(authorizedCalls, tc)
 			} else {
 				log.Printf("[callTools] Dropped unauthorized tool call %q (not available in session)", tc.Name)
+				droppedCalls = append(droppedCalls, tc)
 			}
 		}
 
-		toolCalls = resolveIdentifiers(authorizedCalls, availableTools, accumulatedResults, resolverMap, query)
+		if len(authorizedCalls) == 0 && len(droppedCalls) > 0 {
+			log.Printf("[callTools] All tool calls were unauthorized for role %s: %v", role, droppedCalls)
+			return &AgentResult{Context: fmt.Sprintf("You do not have permission to use %s.", droppedCalls[0].Name)}, nil
+		}
+
+		toolCalls := resolveIdentifiers(authorizedCalls, availableTools, accumulatedResults, resolverMap, query)
 
 		var newCalls []ToolCall
 		for _, tc := range toolCalls {
@@ -953,10 +972,17 @@ Guidelines:
 
 	systemPrompt := baseSystemPrompt
 	if customPrompt != "" {
-		systemPrompt = customPrompt
+		systemPrompt = baseSystemPrompt + "\n\n" + customPrompt
 	}
 
 	cleanedContext := cleanContextPayload(contextStr)
+	isPermissionDenied := strings.Contains(strings.ToLower(cleanedContext), "do not have permission") ||
+		strings.Contains(strings.ToLower(cleanedContext), "not permitted") ||
+		strings.Contains(strings.ToLower(cleanedContext), "permission denied")
+
+	if isPermissionDenied {
+		systemPrompt += "\n\nCRITICAL GUARDRAIL: The user's role does NOT have permission to perform this action or use the required tools. You MUST inform the user that their role does not have permission. Under NO circumstances should you confirm, invent, simulate, or claim that any record, task, todo, or data was created, modified, deleted, or retrieved."
+	}
 
 	var userPromptBuilder strings.Builder
 	if userContext != nil {
