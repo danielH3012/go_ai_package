@@ -661,7 +661,7 @@ func parsePythonToolCalls(text string) []ToolCall {
 				i++
 			}
 			toolName := string(runes[start:i])
-			if !isKnownTool(toolName) {
+			if len(getKnownToolList()) > 0 && !isKnownTool(toolName) {
 				continue
 			}
 

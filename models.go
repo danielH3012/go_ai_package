@@ -400,7 +400,7 @@ func extractContext(ctx context.Context, query string, intent *IntentResult, acc
 func parseIntentJSON(raw string) (*IntentResult, error) {
 	clean := strings.TrimSpace(raw)
 	// Strip markdown code fences if present
-	reFence := regexp.MustCompile(`(?s)` + "```" + `(?:json)?\s*(.*?)\s*` + "```")
+	reFence := regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
 	if match := reFence.FindStringSubmatch(clean); len(match) > 1 {
 		clean = strings.TrimSpace(match[1])
 	} else {
@@ -411,29 +411,61 @@ func parseIntentJSON(raw string) (*IntentResult, error) {
 		}
 	}
 
+	result := &IntentResult{}
 	var rawMap map[string]any
 	if err := json.Unmarshal([]byte(clean), &rawMap); err != nil {
-		return nil, fmt.Errorf("failed to parse intent JSON: %w (raw: %s)", err, clean)
-	}
+		// Gunakan tryParseToolCalls dari toolCall.go yang mendukung tag DeepSeek, LFM, Qwen, Claude, Python syntax, dll.
+		calls := tryParseToolCalls(raw)
+		if len(calls) == 0 && clean != raw {
+			calls = tryParseToolCalls(clean)
+		}
 
-	result := &IntentResult{}
-	if r, ok := rawMap["reason"].(string); ok {
-		result.Reason = r
-	}
+		if len(calls) > 0 {
+			for _, c := range calls {
+				if c.Name != "" {
+					result.Tools = append(result.Tools, c.Name)
+				}
+			}
+			result.Reason = "Extracted via tryParseToolCalls (toolCall.go)"
+		} else {
+			return nil, fmt.Errorf("failed to parse intent JSON: %w (raw: %s)", err, clean)
+		}
+	} else {
+		if r, ok := rawMap["reason"].(string); ok {
+			result.Reason = r
+		}
 
-	// Extract tools (handle []string, single string, or "tool" / "target_tool" keys)
-	if toolsList, ok := rawMap["tools"].([]any); ok {
-		for _, t := range toolsList {
-			if str, ok := t.(string); ok && strings.TrimSpace(str) != "" {
-				result.Tools = append(result.Tools, strings.TrimSpace(str))
+		// Extract tools (handle []string, single string, or "tool" / "target_tool" keys)
+		if toolsList, ok := rawMap["tools"].([]any); ok {
+			for _, t := range toolsList {
+				if str, ok := t.(string); ok && strings.TrimSpace(str) != "" {
+					result.Tools = append(result.Tools, strings.TrimSpace(str))
+				}
+			}
+		} else if toolStr, ok := rawMap["tools"].(string); ok && strings.TrimSpace(toolStr) != "" {
+			result.Tools = []string{strings.TrimSpace(toolStr)}
+		} else if singleTool, ok := rawMap["tool"].(string); ok && strings.TrimSpace(singleTool) != "" {
+			result.Tools = []string{strings.TrimSpace(singleTool)}
+		} else if targetTool, ok := rawMap["target_tool"].(string); ok && strings.TrimSpace(targetTool) != "" {
+			result.Tools = []string{strings.TrimSpace(targetTool)}
+		} else if nameTool, ok := rawMap["name"].(string); ok && strings.TrimSpace(nameTool) != "" {
+			result.Tools = []string{strings.TrimSpace(nameTool)}
+		} else if fnObj, ok := rawMap["function"].(map[string]any); ok {
+			if fnName, ok := fnObj["name"].(string); ok && strings.TrimSpace(fnName) != "" {
+				result.Tools = []string{strings.TrimSpace(fnName)}
 			}
 		}
-	} else if toolStr, ok := rawMap["tools"].(string); ok && strings.TrimSpace(toolStr) != "" {
-		result.Tools = []string{strings.TrimSpace(toolStr)}
-	} else if singleTool, ok := rawMap["tool"].(string); ok && strings.TrimSpace(singleTool) != "" {
-		result.Tools = []string{strings.TrimSpace(singleTool)}
-	} else if targetTool, ok := rawMap["target_tool"].(string); ok && strings.TrimSpace(targetTool) != "" {
-		result.Tools = []string{strings.TrimSpace(targetTool)}
+
+		if len(result.Tools) == 0 && result.Reason == "" {
+			if calls := tryParseToolCalls(raw); len(calls) > 0 {
+				for _, c := range calls {
+					if c.Name != "" {
+						result.Tools = append(result.Tools, c.Name)
+					}
+				}
+				result.Reason = "Extracted via tryParseToolCalls (toolCall.go)"
+			}
+		}
 	}
 
 	// Derive target tool and automatic flags
