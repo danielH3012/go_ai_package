@@ -12,35 +12,72 @@ type UserAuth struct {
 	Name      string `json:"name"`
 }
 
-// ToUserAuth converts a map or existing auth object into a UserAuth struct
+// ToUserAuth converts a map, struct, or nested auth object into a normalized UserAuth struct.
+// It flexibly handles common field aliases (role/Role, user_id/UserID, company_id/company/tenant_id, name/username)
+// and extracts nested auth objects if present, eliminating redundant key injections.
 func ToUserAuth(v any, defaultRole ...string) UserAuth {
 	switch val := v.(type) {
 	case UserAuth:
+		if val.Role == "" && len(defaultRole) > 0 {
+			val.Role = defaultRole[0]
+		}
 		return val
 	case *UserAuth:
 		if val != nil {
-			return *val
+			res := *val
+			if res.Role == "" && len(defaultRole) > 0 {
+				res.Role = defaultRole[0]
+			}
+			return res
 		}
 	case map[string]any:
+		// 1. If nested "auth", "credentials", or "user_auth" exists, extract from it first
+		for _, key := range []string{"auth", "credentials", "user_auth", "UserAuth"} {
+			if nested, ok := val[key]; ok && nested != nil {
+				nestedAuth := ToUserAuth(nested, defaultRole...)
+				if nestedAuth != (UserAuth{}) {
+					return nestedAuth
+				}
+			}
+		}
+
 		auth := UserAuth{}
-		if r, ok := val["role"].(string); ok {
-			auth.Role = r
-		} else if len(defaultRole) > 0 {
+
+		// 2. Role
+		for _, key := range []string{"role", "Role", "user_role"} {
+			if r, ok := val[key].(string); ok && strings.TrimSpace(r) != "" {
+				auth.Role = strings.TrimSpace(r)
+				break
+			}
+		}
+		if auth.Role == "" && len(defaultRole) > 0 {
 			auth.Role = defaultRole[0]
 		}
-		if uid, ok := val["user_id"].(string); ok {
-			auth.UserID = uid
+
+		// 3. UserID
+		for _, key := range []string{"user_id", "UserID", "userId", "userid"} {
+			if uid, ok := val[key].(string); ok && strings.TrimSpace(uid) != "" {
+				auth.UserID = strings.TrimSpace(uid)
+				break
+			}
 		}
-		if comp, ok := val["company"].(string); ok {
-			auth.CompanyID = comp
-		} else if comp, ok := val["company_id"].(string); ok {
-			auth.CompanyID = comp
+
+		// 4. CompanyID
+		for _, key := range []string{"company_id", "CompanyID", "companyId", "company", "tenant_id", "TenantID", "tenantId"} {
+			if comp, ok := val[key].(string); ok && strings.TrimSpace(comp) != "" {
+				auth.CompanyID = strings.TrimSpace(comp)
+				break
+			}
 		}
-		if name, ok := val["username"].(string); ok {
-			auth.Name = name
-		} else if name, ok := val["name"].(string); ok {
-			auth.Name = name
+
+		// 5. Name / Username
+		for _, key := range []string{"username", "Username", "name", "Name", "user_name"} {
+			if name, ok := val[key].(string); ok && strings.TrimSpace(name) != "" {
+				auth.Name = strings.TrimSpace(name)
+				break
+			}
 		}
+
 		return auth
 	}
 	auth := UserAuth{}

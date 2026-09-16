@@ -99,15 +99,20 @@ Ketiga agen ini adalah API utama library. Semua mengembalikan **JSON string** ag
 
 Parameter `userContext map[string]any` adalah "tas konteks sesi" yang diisi oleh `repo.LoadContext()`. Berisi:
 
-| Key | Isi |
-|---|---|
-| `"history"` | `[]ChatMessage` — 10 pesan terakhir sesi |
-| `"role"` | `string` — role pengguna |
-| `"user_id"` | `string` — ID pengguna |
-| `"company"` | `string` — nama perusahaan |
-| `"attachment_text"` | `string` — teks dokumen yang dilampirkan |
-| `"attachment_name"` | `string` — nama file lampiran |
-| `"has_user_uploaded_file"` | `bool` — apakah ada upload baru |
+| Key | Alternatif / Alias | Isi |
+|---|---|---|
+| `"auth"` | `UserAuth` struct / map | Objek auth lengkap (Role, UserID, CompanyID, Name) |
+| `"role"` | `"Role"` | `string` — role pengguna untuk filter RBAC |
+| `"user_id"` | `"UserID"`, `"userId"` | `string` — ID pengguna |
+| `"company"` | `"company_id"`, `"CompanyID"` | `string` — nama/ID perusahaan |
+| `"username"` | `"name"`, `"Name"` | `string` — nama pengguna |
+| `"history"` | — | `[]ChatMessage` — 10 pesan terakhir sesi |
+| `"attachment_text"` | — | `string` — teks dokumen yang dilampirkan |
+| `"attachment_name"` | — | `string` — nama file lampiran |
+| `"has_user_uploaded_file"` | — | `bool` — apakah ada upload baru |
+
+> [!TIP]
+> **Bebas Redundansi**: Anda cukup mengeset objek `userContext["auth"] = req.Auth` atau cukup satu set key standar (`role`, `user_id`, `company`, `name`). Library menangani alias dan resolusi otomatis di belakang layar — tidak perlu lagi menginjeksi alias berulang kali!
 
 Ketiga agen **otomatis membaca** `userContext` ini untuk menyuntikkan riwayat chat, lampiran, dan info company ke dalam prompt LLM.
 
@@ -168,7 +173,6 @@ func CallTools(
     client        *client.Client,
     mcpTools      []mcp.Tool,
     query         string,
-    role          string,
     userContext   map[string]any,
     maxIterations int,
     model         string,
@@ -180,8 +184,11 @@ func CallTools(
 |---|---|
 | `client` | Koneksi MCP server dari `ConnectAndLoadKnownTools` |
 | `mcpTools` | Daftar tool dari MCP server |
-| `role` | Role user untuk filter RBAC (contoh: `"admin"`, `"user"`) |
+| `query` | Pertanyaan atau perintah dari user |
+| `userContext` | Tas konteks sesi (RBAC `role` dibaca otomatis dari `userContext["role"]` atau `userContext["auth"]`) |
 | `maxIterations` | Batas iterasi loop (minimal 3, lebih besar = lebih teliti) |
+| `model` | Nama/alias model (kosong `""` = pakai `GeneratorModel`) |
+| `toolsOpts` | Opsi tambahan (mis. `WithToolsPrompt(...)`) |
 
 **Return** — JSON string:
 ```json
@@ -200,7 +207,7 @@ func CallTools(
 ```go
 toolJSON, err := goaipackage.CallTools(
     ctx, mcpClient, mcpTools,
-    "Tampilkan 5 aset termahal", "admin",
+    "Tampilkan 5 aset termahal",
     userCtx, 3, "",
 )
 ```
@@ -208,7 +215,7 @@ toolJSON, err := goaipackage.CallTools(
 **Custom guardrail**:
 ```go
 toolJSON, err := goaipackage.CallTools(
-    ctx, mcpClient, mcpTools, query, role, userCtx, 3, "",
+    ctx, mcpClient, mcpTools, query, userCtx, 3, "",
     goaipackage.WithToolsPrompt("Jangan pernah memanggil tool delete tanpa konfirmasi eksplisit dari user."),
 )
 ```
@@ -642,13 +649,13 @@ goaipackage.WithMCPLink("./mcp_server/server.go")
 
 #### `ToUserAuth(v any, defaultRole ...string) UserAuth`
 
-Konversi `map[string]any` atau struct ke `UserAuth`. Berguna saat parsing JWT claims atau session data.
+Konversi `map[string]any`, struct `UserAuth`, atau nested auth object ke `UserAuth` yang ternormalisasi. Otomatis mengenali berbagai variasi penamaan key (`company_id`/`company`/`tenant_id`, `user_id`/`UserID`, `name`/`username`, `role`/`Role`).
 
 ```go
 auth := goaipackage.ToUserAuth(map[string]any{
-    "role":    "admin",
-    "user_id": "u001",
-    "company": "PT Maju",
+    "role":       "admin",
+    "user_id":    "u001",
+    "company_id": "PT Maju",
 })
 ```
 
@@ -721,11 +728,11 @@ func main() {
             Auth:    goai.UserAuth{Role: req.Role},
         })
 
-        // B. Jalankan tiga agen secara berurutan
+        // B. Jalankan agen CallTools & GenerateResponse
         // (model "" = pakai DefaultModel: liquid/lfm-2.5-2.6b:free)
         toolJSON, _ := goai.CallTools(
             r.Context(), mcpClient, tools,
-            req.Message, req.Role, userCtx, 3, "",
+            req.Message, userCtx, 3, "",
         )
 
         respJSON, _ := goai.GenerateResponse(
@@ -784,7 +791,7 @@ http.HandleFunc("/api/chat-with-file", func(w http.ResponseWriter, r *http.Reque
         userCtx["has_user_uploaded_file"] = true
     }
 
-    toolJSON, _ := goai.CallTools(r.Context(), mcpClient, tools, message, role, userCtx, 3, "")
+    toolJSON, _ := goai.CallTools(r.Context(), mcpClient, tools, message, userCtx, 3, "")
     respJSON, _ := goai.GenerateResponse(r.Context(), message, toolJSON, userCtx, "")
 
     var out struct{ Answer string `json:"answer"` }

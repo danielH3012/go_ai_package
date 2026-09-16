@@ -215,23 +215,56 @@ func getTemporalContextPrompt() string {
 	return dateReference
 }
 
+func extractCompanyFromContext(userContext map[string]any) string {
+	if userContext == nil {
+		return ""
+	}
+	if comp, ok := userContext["company"].(string); ok && strings.TrimSpace(comp) != "" {
+		return strings.TrimSpace(comp)
+	}
+	if compInfo, ok := userContext["company_info"].(map[string]any); ok {
+		if compName, ok := compInfo["company_name"].(string); ok && strings.TrimSpace(compName) != "" {
+			return strings.TrimSpace(compName)
+		}
+	}
+	if compId, ok := userContext["company_id"].(string); ok && strings.TrimSpace(compId) != "" {
+		return strings.TrimSpace(compId)
+	}
+	auth := ToUserAuth(userContext)
+	return auth.CompanyID
+}
+
+func extractHistoryFromContext(userContext map[string]any) []ChatMessage {
+	if userContext != nil {
+		if h, ok := userContext["history"].([]ChatMessage); ok {
+			return h
+		}
+	}
+	return nil
+}
+
+func extractAttachmentFromContext(userContext map[string]any) (name, text string) {
+	if userContext == nil {
+		return "", ""
+	}
+	if attachText, ok := userContext["attachment_text"].(string); ok && strings.TrimSpace(attachText) != "" {
+		attachName := "Attached Document"
+		if n, ok := userContext["attachment_name"].(string); ok && strings.TrimSpace(n) != "" {
+			attachName = strings.TrimSpace(n)
+		}
+		return attachName, attachText
+	}
+	return "", ""
+}
+
 // extractContext inspects accumulated API tool results, performs analytical reasoning & filtering with the LLM,
 // determines whether data is sufficient (<verdict status="ENOUGH"> vs <verdict status="NEED_MORE">),
 // and returns (isEnough bool, extractedFacts string, missingInfo string).
 func extractContext(ctx context.Context, query string, intent *IntentResult, accumulatedResults []ToolExecutionResult, userContext map[string]any, iteration int, maxIterations int, model string) (bool, string, string) {
-	var history []ChatMessage
-	if userContext != nil {
-		if h, ok := userContext["history"].([]ChatMessage); ok {
-			history = h
-		}
-	}
+	history := extractHistoryFromContext(userContext)
 	historyStr := FormatChatHistoryForLlm(history)
-	hasAttachment := false
-	if userContext != nil {
-		if attachText, ok := userContext["attachment_text"].(string); ok && attachText != "" {
-			hasAttachment = true
-		}
-	}
+	attachName, attachText := extractAttachmentFromContext(userContext)
+	hasAttachment := attachText != ""
 
 	onlyNoTools := len(accumulatedResults) > 0
 	for _, res := range accumulatedResults {
@@ -256,15 +289,10 @@ func extractContext(ctx context.Context, query string, intent *IntentResult, acc
 		rawDataStr = formatMultiRawDataForLlm(accumulatedResults)
 	}
 	temporalInfo := getTemporalContextPrompt()
+	companyName := extractCompanyFromContext(userContext)
 	companyInfo := ""
-	if userContext != nil {
-		if comp, ok := userContext["company"].(string); ok && comp != "" {
-			companyInfo = fmt.Sprintf(" The requesting user belongs to company '%s'.", comp)
-		} else if compInfo, ok := userContext["company_info"].(map[string]any); ok {
-			if compName, ok := compInfo["company_name"].(string); ok && compName != "" {
-				companyInfo = fmt.Sprintf(" The requesting user belongs to company '%s'.", compName)
-			}
-		}
+	if companyName != "" {
+		companyInfo = fmt.Sprintf(" The requesting user belongs to company '%s'.", companyName)
 	}
 
 	systemPrompt := fmt.Sprintf(
@@ -303,14 +331,8 @@ func extractContext(ctx context.Context, query string, intent *IntentResult, acc
 	if historyStr != "" {
 		userPromptBuilder.WriteString(fmt.Sprintf("=== RECENT CONVERSATION HISTORY (RAW) ===\n%s\n\n", historyStr))
 	}
-	if userContext != nil {
-		if attachText, ok := userContext["attachment_text"].(string); ok && attachText != "" {
-			attachName := "Attached Document"
-			if name, ok := userContext["attachment_name"].(string); ok && name != "" {
-				attachName = name
-			}
-			userPromptBuilder.WriteString(fmt.Sprintf("=== ATTACHED DOCUMENT CONTEXT (%s) ===\n%s\n\n", attachName, attachText))
-		}
+	if attachText != "" {
+		userPromptBuilder.WriteString(fmt.Sprintf("=== ATTACHED DOCUMENT CONTEXT (%s) ===\n%s\n\n", attachName, attachText))
 	}
 	userPromptBuilder.WriteString(fmt.Sprintf("=== LIVE DATABASE DATA ===\n%s\n\n=== USER QUESTION ===\n%s", rawDataStr, query))
 
@@ -491,15 +513,11 @@ IMPORTANT: Output ONLY the raw JSON object. Do not include markdown codeblocks o
 
 	var userPrompt strings.Builder
 	if userContext != nil {
-		if hist, ok := userContext["history"].([]ChatMessage); ok && len(hist) > 0 {
+		if hist := extractHistoryFromContext(userContext); len(hist) > 0 {
 			userPrompt.WriteString(fmt.Sprintf("=== PREVIOUS CONVERSATION HISTORY ===\n%s\n\n", FormatChatHistoryForLlm(hist)))
 		}
 		hasUploaded, _ := userContext["has_user_uploaded_file"].(bool)
-		if attachText, ok := userContext["attachment_text"].(string); ok && attachText != "" {
-			attachName := "Attached Document"
-			if name, ok := userContext["attachment_name"].(string); ok && name != "" {
-				attachName = name
-			}
+		if attachName, attachText := extractAttachmentFromContext(userContext); attachText != "" {
 			if hasUploaded {
 				userPrompt.WriteString(fmt.Sprintf("=== USER-UPLOADED FILE FOR THIS REQUEST (%s) ===\n%s\n\n", attachName, attachText))
 			} else {
@@ -537,7 +555,6 @@ IMPORTANT: Output ONLY the raw JSON object. Do not include markdown codeblocks o
 	log.Printf("[searchIntent] Query: %q -> Category: %q, TargetTool: %q, IsMutation: %t, IsDelete: %t, IsUpdate: %t, IsReport: %t, IsOffTopic: %t",
 		query, result.Category, result.TargetTool, result.IsMutation, result.IsDelete, result.IsUpdate, result.IsReport, result.IsOffTopic)
 
-
 	return result
 }
 
@@ -558,8 +575,8 @@ func hasTool(tools []mcp.Tool, name string) bool {
 }
 
 // CallTools orchestrates multi-turn tool calling, reasoning loops, and returns the result directly as a JSON string.
-func CallTools(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, query string, role string, userContext map[string]any, maxIterations int, model string, toolsOpts ...RequestToolsOption) (string, error) {
-	res, err := executeCallTools(ctx, client, mcpTools, query, role, userContext, maxIterations, model, toolsOpts...)
+func CallTools(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, query string, userContext map[string]any, maxIterations int, model string, toolsOpts ...RequestToolsOption) (string, error) {
+	res, err := executeCallTools(ctx, client, mcpTools, query, userContext, maxIterations, model, toolsOpts...)
 	if err != nil {
 		return "", err
 	}
@@ -567,9 +584,10 @@ func CallTools(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, 
 }
 
 // executeCallTools handles internal tool execution logic
-func executeCallTools(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, query string, role string, userContext map[string]any, maxIterations int, model string, toolsOpts ...RequestToolsOption) (*AgentResult, error) {
-	// 1. RBAC at the top: immediately enforce role permissions and filter tools
-	role = strings.ToLower(strings.TrimSpace(role))
+func executeCallTools(ctx context.Context, client *client.Client, mcpTools []mcp.Tool, query string, userContext map[string]any, maxIterations int, model string, toolsOpts ...RequestToolsOption) (*AgentResult, error) {
+	// 1. RBAC at the top: read role & auth from userContext, enforce permissions and filter tools
+	userAuth := ToUserAuth(userContext)
+	role := strings.ToLower(strings.TrimSpace(userAuth.Role))
 	availableTools := filterRoles(mcpTools, role)
 	if len(availableTools) == 0 {
 		return &AgentResult{Context: "I do not have permissions or tools to access that information."}, nil
@@ -604,16 +622,7 @@ func executeCallTools(ctx context.Context, client *client.Client, mcpTools []mcp
 	availableTools = shrinkToolCatalog(availableTools)
 
 	resolverMap := inferResolverMap(availableTools)
-	companyName := ""
-	if userContext != nil {
-		if comp, ok := userContext["company"].(string); ok && comp != "" {
-			companyName = comp
-		} else if compInfo, ok := userContext["company_info"].(map[string]any); ok {
-			if compName, ok := compInfo["company_name"].(string); ok && compName != "" {
-				companyName = compName
-			}
-		}
-	}
+	companyName := extractCompanyFromContext(userContext)
 
 	// Extract custom prompt / guardrails from ToolsPrompt or userContext
 	var customToolsPrompt string
@@ -677,26 +686,15 @@ If NO tools are needed:
 		systemInstruction += fmt.Sprintf("\nUser context / organization: '%s'.", companyName)
 	}
 
-	var history []ChatMessage
-	if userContext != nil {
-		if h, ok := userContext["history"].([]ChatMessage); ok {
-			history = h
-		}
-	}
+	history := extractHistoryFromContext(userContext)
 	historyStr := FormatChatHistoryForLlm(history)
 
 	var routerUserPrompt strings.Builder
 	if historyStr != "" {
 		routerUserPrompt.WriteString(fmt.Sprintf("=== RECENT CONVERSATION HISTORY ===\n%s\n\n", historyStr))
 	}
-	if userContext != nil {
-		if attachText, ok := userContext["attachment_text"].(string); ok && attachText != "" {
-			attachName := "Attached Document"
-			if name, ok := userContext["attachment_name"].(string); ok && name != "" {
-				attachName = name
-			}
-			routerUserPrompt.WriteString(fmt.Sprintf("=== ATTACHED DOCUMENT CONTEXT (%s) ===\n%s\n\n", attachName, attachText))
-		}
+	if attachName, attachText := extractAttachmentFromContext(userContext); attachText != "" {
+		routerUserPrompt.WriteString(fmt.Sprintf("=== ATTACHED DOCUMENT CONTEXT (%s) ===\n%s\n\n", attachName, attachText))
 	}
 	routerUserPrompt.WriteString(fmt.Sprintf("=== QUESTION ===\n%s", query))
 
@@ -786,7 +784,7 @@ If NO tools are needed:
 
 		newCalls = realCalls
 
-		execResults := executeToolsParallel(ctx, client, newCalls, availableTools, ToUserAuth(userContext, role))
+		execResults := executeToolsParallel(ctx, client, newCalls, availableTools, userAuth)
 		accumulatedResults = append(accumulatedResults, execResults...)
 
 		isEnough, facts, missing := extractContext(ctx, query, intent, accumulatedResults, userContext, iteration, maxIterations, model)
@@ -930,14 +928,10 @@ Guidelines:
 
 	var userPromptBuilder strings.Builder
 	if userContext != nil {
-		if hist, ok := userContext["history"].([]ChatMessage); ok && len(hist) > 0 {
+		if hist := extractHistoryFromContext(userContext); len(hist) > 0 {
 			userPromptBuilder.WriteString(fmt.Sprintf("=== PREVIOUS CONVERSATION HISTORY ===\n%s\n\n", FormatChatHistoryForLlm(hist)))
 		}
-		if attachText, ok := userContext["attachment_text"].(string); ok && attachText != "" {
-			attachName := "Attached Document"
-			if name, ok := userContext["attachment_name"].(string); ok && name != "" {
-				attachName = name
-			}
+		if attachName, attachText := extractAttachmentFromContext(userContext); attachText != "" {
 			userPromptBuilder.WriteString(fmt.Sprintf("=== ATTACHED DOCUMENT CONTEXT (%s) ===\n%s\n\n", attachName, attachText))
 		}
 	}

@@ -108,10 +108,13 @@ func NewHistoryRepository() (*HistoryRepository, error) {
 // LoadContext mengambil riwayat chat dan teks lampiran aktif berdasarkan CacheID
 func (repo *HistoryRepository) LoadContext(req *RequestChat) (map[string]any, error) {
 	uctx := map[string]any{
-		"user_id":  req.Auth.UserID,
-		"username": req.Auth.Name,
-		"role":     req.Auth.Role,
-		"company":  req.Auth.CompanyID,
+		"auth":       req.Auth,
+		"user_id":    req.Auth.UserID,
+		"username":   req.Auth.Name,
+		"name":       req.Auth.Name,
+		"role":       req.Auth.Role,
+		"company":    req.Auth.CompanyID,
+		"company_id": req.Auth.CompanyID,
 	}
 
 	// 1. Ambil Riwayat Chat (History) 10 pesan terakhir
