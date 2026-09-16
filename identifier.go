@@ -215,8 +215,8 @@ type idAffix struct {
 // parseIDAffix inspects whether a parameter name is shaped like an ID (either prefix or suffix).
 // Supports:
 // - exact: "id", "Id", "ID", "_id", "id_"
-// - suffix: "asset_id", "assetId", "assetID", "ASSET_ID"
-// - prefix: "id_asset", "ID_ASSET", "_id_asset", "idAsset", "IDAsset"
+// - suffix: "asset_id", "assetId", "assetID", "assetiD", "ASSET_ID"
+// - prefix: "id_asset", "ID_ASSET", "_id_asset", "idAsset", "IDAsset", "IdAsset", "iDAsset"
 // Correctly rejects non-id words like "valid", "avoid", "identity", "idle", "idea".
 func parseIDAffix(name string) (idAffix, bool) {
 	nameTrimmed := strings.TrimSpace(name)
@@ -248,7 +248,7 @@ func parseIDAffix(name string) (idAffix, bool) {
 		return idAffix{token: nameTrimmed[:3], isPrefix: true}, true
 	}
 
-	// CamelCase prefixes (e.g. idAsset, IDAsset)
+	// CamelCase prefixes (e.g. idAsset, IDAsset, IdAsset, iDAsset)
 	if strings.HasPrefix(nameTrimmed, "id") && l > 2 {
 		r := rune(nameTrimmed[2])
 		if unicode.IsUpper(r) {
@@ -256,6 +256,18 @@ func parseIDAffix(name string) (idAffix, bool) {
 		}
 	}
 	if strings.HasPrefix(nameTrimmed, "ID") && l > 2 {
+		r := rune(nameTrimmed[2])
+		if unicode.IsUpper(r) {
+			return idAffix{token: nameTrimmed[:2], isPrefix: true}, true
+		}
+	}
+	if strings.HasPrefix(nameTrimmed, "Id") && l > 2 {
+		r := rune(nameTrimmed[2])
+		if unicode.IsUpper(r) {
+			return idAffix{token: nameTrimmed[:2], isPrefix: true}, true
+		}
+	}
+	if strings.HasPrefix(nameTrimmed, "iD") && l > 2 {
 		r := rune(nameTrimmed[2])
 		if unicode.IsUpper(r) {
 			return idAffix{token: nameTrimmed[:2], isPrefix: true}, true
@@ -357,7 +369,7 @@ func looksCanonicalID(value string, records []map[string]any, idField string) bo
 		}
 	}
 	prefix = strings.TrimRight(prefix, "0123456789")
-	if len(prefix) >= 3 && strings.HasPrefix(val, prefix) {
+	if len(prefix) >= 2 && strings.HasPrefix(val, prefix) {
 		return true
 	}
 
@@ -372,7 +384,7 @@ func looksCanonicalID(value string, records []map[string]any, idField string) bo
 		}
 	}
 	suffix = strings.TrimLeft(suffix, "0123456789")
-	if len(suffix) >= 3 && strings.HasSuffix(val, suffix) {
+	if len(suffix) >= 2 && strings.HasSuffix(val, suffix) {
 		return true
 	}
 

@@ -290,37 +290,106 @@ Fungsi ini otomatis melakukan:
 
 ### Toleransi Penamaan ID & Resolusi Otomatis (Identifier Engine)
 
-Developer **tidak perlu khawatir atau bingung** memikirkan aturan kaku konvensi penamaan ID saat membuat tool MCP maupun merancang skema database. Package ini dilengkapi mesin resolusi cerdas (*Identifier Engine*) yang memberikan kebebasan dan fleksibilitas penuh:
+Developer **tidak perlu khawatir atau bingung** memikirkan aturan kaku konvensi penamaan ID saat membuat tool MCP maupun merancang skema database. Package ini dilengkapi mesin resolusi cerdas (*Identifier Engine*) yang memberikan kebebasan dan fleksibilitas penuh.
 
-#### 1. Bebas Memilih Gaya Penamaan Parameter ID
-Sistem mengenali parameter ID dalam berbagai format penamaan secara otomatis, baik awalan (*prefix* khas database lokal/Indonesia), akhiran (*suffix* standar internasional), camelCase, maupun snake_case:
+---
 
-| Gaya Penamaan | Contoh Parameter | Status | Keterangan |
+#### Aturan A — Penamaan Parameter ID (di Tool MCP / Schema)
+
+Mesin mengenali sebuah parameter sebagai "parameter ID" berdasarkan bentuk namanya. Berikut seluruh bentuk yang didukung:
+
+**1. Exact match (parameter itu sendiri adalah ID):**
+
+| Nama Parameter | Dikenali? |
+|---|---|
+| `id` | ✅ |
+| `ID` | ✅ |
+| `_id` | ✅ |
+| `id_` | ✅ |
+
+**2. Suffix — ID di belakang nama entitas:**
+
+| Pola | Contoh | Dikenali? | Entitas yang diekstrak |
 |---|---|---|---|
-| **Prefix (Database Indonesia)** | `id_asset`, `id_barang`, `id_user`, `id_transaksi_pembelian` | ✅ Didukung Otomatis | Mengupas entitas menjadi `asset`, `barang`, dsb. |
-| **Prefix (camelCase / PascalCase)** | `idAsset`, `idBarang`, `idUser`, `IDAsset`, `ID_USER` | ✅ Didukung Otomatis | Menyesuaikan huruf kapital secara otomatis |
-| **Suffix (Standar Internasional)** | `asset_id`, `barang_id`, `user_id`, `invoice_id` | ✅ Didukung Otomatis | Mengupas entitas menjadi `asset`, `barang`, dsb. |
-| **Suffix (camelCase)** | `assetId`, `barangId`, `userId`, `ASSET_ID` | ✅ Didukung Otomatis | Format camelCase & uppercase standar |
-| **Generic ID** | `id`, `_id`, `ID` | ✅ Didukung Otomatis | Otomatis dipasangkan ke entitas nama tool |
+| `entitas_id` | `user_id`, `asset_id`, `id_transaksi` | ✅ | `user`, `asset` |
+| `entitasId` | `userId`, `assetId` | ✅ | `user`, `asset` |
+| `entitasID` | `userID`, `assetID` | ✅ | `user`, `asset` |
+| `entitasiD` | `useriD`, `assetiD` | ✅ | `user`, `asset` |
+| `ENTITAS_ID` | `USER_ID`, `ASSET_ID` | ✅ | `user`, `asset` |
+
+> [!NOTE]
+> `userid` (huruf kecil semua, tanpa underscore/kapital) **tidak dikenali** karena ambigu dengan kata biasa seperti `valid`, `avoid`. Gunakan minimal satu pemisah kapital atau underscore.
+
+**3. Prefix — ID di depan nama entitas:**
+
+| Pola | Contoh | Dikenali? | Entitas yang diekstrak |
+|---|---|---|---|
+| `id_entitas` | `id_user`, `id_asset`, `id_transaksi_pembelian` | ✅ | `user`, `asset`, `transaksi_pembelian` |
+| `ID_ENTITAS` | `ID_USER`, `ID_ASSET` | ✅ | `user`, `asset` |
+| `_id_entitas` | `_id_user`, `_id_asset` | ✅ | `user`, `asset` |
+| `idEntitas` | `idUser`, `idAsset` | ✅ | `User`, `Asset` |
+| `IDEntitas` | `IDUser`, `IDAsset` | ✅ | `User`, `Asset` |
+| `IdEntitas` | `IdUser`, `IdAsset` | ✅ | `User`, `Asset` |
+| `iDEntitas` | `iDUser`, `iDAsset` | ✅ | `User`, `Asset` |
 
 > [!TIP]
-> **Tidak ada penalti beda nama!** Jika parameter di tool MCP Anda bernama `id_asset`, tetapi kolom di database backend Anda bernama `asset_id` (atau sebaliknya), mesin [inferIdField](file:///c:/Users/user/OneDrive/Documents/proyek_DH/QTERA/go_ai_package/identifier.go#L438) secara otomatis menjembatani dan mencocokkan kedua nama kolom tersebut tanpa konfigurasi manual.
+> **Tidak ada penalti beda nama!** Jika parameter di tool MCP Anda bernama `id_asset`, tetapi kolom di database backend Anda bernama `assetId` atau `asset_id` (atau sebaliknya), mesin [`inferIdField`](file:///c:/Users/user/OneDrive/Documents/proyek_DH/QTERA/go_ai_package/identifier.go#L438) secara otomatis menjembatani dan mencocokkan kedua nama kolom tersebut tanpa konfigurasi manual.
 
-#### 2. Bebas Menggunakan Format Nilai ID Apa Saja
-Database Anda bebas menggunakan format kode atau angka ID apa pun; mesin [looksCanonicalID](file:///c:/Users/user/OneDrive/Documents/proyek_DH/QTERA/go_ai_package/identifier.go#L309) mengenali semua pola berikut secara otomatis:
+---
 
-* **Format Awalan Kode (Prefix):** `AST-001`, `INV/2026/001`, `SKU-XYZ-99`
-* **Format Akhiran Kode (Suffix):** `001-AST`, `1001-FIN`, `TX-999-ID`
-* **Format Angka Murni (Auto-Increment / Padded):** `1`, `42`, `105`, `00123`
-* **Format UUID:** `550e8400-e29b-41d4-a716-446655440000`
+#### Aturan B — Format Nilai ID (di Database / API Response)
 
-#### 3. Resolusi Nama ke ID Otomatis (*Fuzzy Auto-Correction*)
+Setelah parameter dikenali sebagai ID, mesin [`looksCanonicalID`](file:///c:/Users/user/OneDrive/Documents/proyek_DH/QTERA/go_ai_package/identifier.go#L309) memeriksa apakah nilai yang diberikan AI sudah berbentuk ID resmi (bukan nama bebas). Mesin ini belajar dari pola ID yang sudah ada di cache data referensi.
+
+**Format yang dikenali otomatis:**
+
+| Format | Contoh Nilai | Syarat Lolos | Dikenali? |
+|---|---|---|---|
+| **Angka murni** | `1`, `42`, `1001`, `00123` | Semua record juga pure digit | ✅ |
+| **UUID** | `550e8400-e29b-41d4-a716-446655440000` | Minimal 1 record juga UUID | ✅ |
+| **Prefix kode ≥ 2 char** | `id123`, `AST-001`, `ubm999`, `INV/2026/01`, `SKU-XYZ` | Record berbagi prefix ≥ 2 karakter (non-digit) | ✅ |
+| **Suffix kode ≥ 2 char** | `123-id`, `001-AST`, `999TX` | Record berbagi suffix ≥ 2 karakter (non-digit) | ✅ |
+| **1 karakter prefix/suffix** | `a1`, `1b` | Terlalu ambigu, ditolak | ❌ |
+| **Nama bebas** | `meja rapat jati`, `Dell XPS` | Bukan pola ID | ❌ → fuzzy match |
+
+**Logika deteksi prefix/suffix:**
+
+Mesin menganalisis semua ID di cache data referensi untuk menemukan **prefix atau suffix yang sama**, kemudian memeriksa apakah nilai yang diberikan cocok dengan pola tersebut:
+
+```
+Records: ["id001", "id002", "id003"]
+  → Common prefix: "id00" → strip angka di ujung → "id"
+  → len("id") = 2 ≥ 2 ✅
+  → "id123" starts with "id" → LOLOS ✅
+
+Records: ["AST-001", "AST-002"]
+  → Common prefix: "AST-00" → strip angka → "AST-"
+  → len("AST-") = 4 ≥ 2 ✅
+  → "AST-999" starts with "AST-" → LOLOS ✅
+
+Records: ["001-TX", "002-TX"]
+  → Common suffix: "0-TX" → strip angka kiri → "-TX"
+  → len("-TX") = 3 ≥ 2 ✅
+  → "999-TX" ends with "-TX" → LOLOS ✅
+
+Records: ["a1", "a2"]
+  → Common prefix: "a" → len("a") = 1 < 2 → DITOLAK ❌
+```
+
+> [!IMPORTANT]
+> Nilai yang **tidak lolos** `looksCanonicalID` tidak langsung ditolak — sistem masih mencoba **fuzzy match** (mencocokkan dengan nama/label di data referensi). Hanya jika fuzzy match juga gagal, resolver tool baru diinjeksi ulang untuk mengambil data terbaru.
+
+---
+
+#### Aturan C — Resolusi Nama ke ID Otomatis (*Fuzzy Auto-Correction*)
+
 Pengguna akhir di UI chat tidak perlu mengingat atau menghafal nomor ID teknis. Jika user menyebut nama barang atau entitas:
 * User chat: *"Tolong hapus meja rapat jati"*
 * AI memanggil: `delete_asset(id="meja rapat jati")` *(bukan ID resmi)*
 * Sistem otomatis mencari ke data referensi sebelumnya, mencocokkan *"meja rapat jati"*, dan mengoreksi parameternya menjadi `id: "AST-042"`.
 
-#### 4. Proteksi Keamanan Data Ambigu (*Ambiguity Guard*)
+#### Aturan D — Proteksi Keamanan Data Ambigu (*Ambiguity Guard*)
+
 Jika pengguna menyebut nama yang memiliki beberapa varian mirip di database (misal user minta update *"Dell"* padahal ada *"Dell Inspiron"* dan *"Dell XPS"*):
 * Pada operasi baca (*Read*), sistem memilih hasil yang paling relevan.
 * Pada operasi mutasi data (*Write / Delete / Update*), sistem **secara otomatis menolak menebak sendiri** demi mencegah terjadinya salah edit atau salah hapus data penting.
