@@ -341,7 +341,7 @@ func extractContext(ctx context.Context, query string, intent *IntentResult, acc
 		{Role: "user", Content: userPromptBuilder.String()},
 	}
 
-	res, err := ChatGenerate(ctx, messages, nil, 32768, model, 3)
+	res, err := ChatGenerate(ctx, messages, nil, 524288, model, 3)
 	if err != nil {
 		log.Printf("[extractContext] Failed to extract context with LLM: %v", err)
 		return true, rawDataStr, ""
@@ -749,7 +749,7 @@ If NO tools are needed:
 	}
 
 	for iteration := 1; iteration <= maxIterations; iteration++ {
-		res, err := ChatGenerate(ctx, messages, nil, 32768, model, 3)
+		res, err := ChatGenerate(ctx, messages, nil, 524288, model, 3)
 		if err != nil {
 			log.Printf("[callTools] ChatGenerate error on iteration %d: %v", iteration, err)
 			break
@@ -1000,7 +1000,7 @@ Guidelines:
 		{Role: "user", Content: userPromptBuilder.String()},
 	}
 
-	res, err := ChatGenerate(ctx, messages, nil, 32768, model, 3)
+	res, err := ChatGenerate(ctx, messages, nil, 524288, model, 3)
 	if err != nil {
 		log.Printf("[generateResponse] Failed to generate response: %v", err)
 		return &ResponseResult{Answer: "I do not have information or unable to do that."}
